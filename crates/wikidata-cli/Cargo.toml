@@ -1,0 +1,32 @@
+[package]
+name = "wikidata-cli"
+edition.workspace = true
+version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "wikidata-rs — the `wikidata` command: filter, extract and inspect Wikidata JSON dumps fast."
+keywords = ["wikidata", "dump", "cli", "json", "extract"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "wikidata"
+path = "src/main.rs"
+
+[features]
+default = ["mimalloc"]
+# mimalloc as the global allocator (see docs/ARCHITECTURE.md for why).
+mimalloc = ["dep:mimalloc"]
+
+[dependencies]
+wikidata-dump.workspace = true
+wikidata-model.workspace = true
+wikidata-filter.workspace = true
+wikidata-export.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+mimalloc = { workspace = true, optional = true }
+
+[dev-dependencies]
+bzip2.workspace = true

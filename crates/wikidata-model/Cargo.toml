@@ -1,0 +1,24 @@
+[package]
+name = "wikidata-model"
+edition.workspace = true
+version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+description = "wikidata-rs — Wikidata entities as typed, normalised Rust values: typed claims, ranks, qualifiers, language fallback and derived fields, parsed straight from dump lines."
+keywords = ["wikidata", "json", "entity", "parser"]
+categories = ["parser-implementations", "encoding"]
+
+[features]
+default = ["sonic"]
+# Parse with sonic-rs (SIMD) instead of serde_json; see docs/ARCHITECTURE.md.
+sonic = ["dep:sonic-rs"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sonic-rs = { workspace = true, optional = true }
+memchr.workspace = true
+rustc-hash.workspace = true
+thiserror.workspace = true

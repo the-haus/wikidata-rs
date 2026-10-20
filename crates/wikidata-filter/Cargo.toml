@@ -1,0 +1,20 @@
+[package]
+name = "wikidata-filter"
+edition.workspace = true
+version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+description = "wikidata-rs — filters for Wikidata dumps that reject lines before parsing them: id sets, entity types, properties, claim values, instance-of with subclasses (a compact class index), sitelinks."
+keywords = ["wikidata", "filter", "dump", "subclass"]
+categories = ["data-structures", "filesystem"]
+
+[dependencies]
+wikidata-model.workspace = true
+serde_json.workspace = true
+memchr.workspace = true
+aho-corasick.workspace = true
+rustc-hash.workspace = true
+zstd.workspace = true
+thiserror.workspace = true

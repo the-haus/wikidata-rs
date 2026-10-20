@@ -1,0 +1,28 @@
+[package]
+name = "wikidata-node"
+edition.workspace = true
+version.workspace = true
+license-file.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["mimalloc"]
+mimalloc = ["dep:mimalloc"]
+
+[dependencies]
+napi = { version = "2", default-features = false, features = ["napi6", "serde-json"] }
+napi-derive = "2"
+serde.workspace = true
+serde_json.workspace = true
+mimalloc = { workspace = true, optional = true }
+
+wikidata-dump.workspace = true
+wikidata-model.workspace = true
+wikidata-filter.workspace = true
+wikidata-export.workspace = true
+
+[build-dependencies]
+napi-build = "2"

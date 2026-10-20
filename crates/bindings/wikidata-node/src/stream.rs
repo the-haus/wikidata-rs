@@ -1,0 +1,270 @@
+//! A running task: a producer thread, a threadsafe function that hands
+//! events to JS, and the credits that bound how far it runs ahead.
+
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
+
+use napi::threadsafe_function::{ErrorStrategy, ThreadSafeCallContext, ThreadsafeFunction, ThreadsafeFunctionCallMode};
+use napi::{Env, JsFunction, JsObject, JsUnknown, Result};
+use napi_derive::napi;
+use wikidata_export::{Event, Flow, Progress, Record};
+
+use crate::batch::EntityBatch;
+use crate::credits::Credits;
+
+/// What the producer sends to JS.
+pub(crate) enum StreamEvent {
+    Batch(Box<EntityBatch>),
+    Progress(Progress),
+    End(serde_json::Value),
+    Error(String),
+}
+
+impl StreamEvent {
+    fn into_js(self, env: &Env) -> Result<JsObject> {
+        let mut o = env.create_object()?;
+        match self {
+            StreamEvent::Batch(b) => {
+                o.set("type", "batch")?;
+                o.set("batch", b.into_js(env)?)?;
+            }
+            StreamEvent::Progress(p) => {
+                o.set("type", "progress")?;
+                o.set("bytesIn", p.bytes_in as f64)?;
+                o.set("bytesTotal", p.bytes_total.map(|t| t as f64))?;
+                o.set("bytesOut", p.bytes_out as f64)?;
+                o.set("entities", p.entities as f64)?;
+                o.set("matched", p.matched as f64)?;
+                o.set("elapsedMs", p.elapsed_ms as f64)?;
+            }
+            StreamEvent::End(stats) => {
+                o.set("type", "end")?;
+                o.set("stats", env.to_js_value(&as_doubles(stats))?)?;
+            }
+            StreamEvent::Error(message) => {
+                o.set("type", "error")?;
+                o.set("message", message)?;
+            }
+        }
+        Ok(o)
+    }
+}
+
+/// Integers as doubles: napi turns those beyond 32 bits into BigInts,
+/// while JS wants plain numbers (counts and byte sizes fit in 53 bits).
+fn as_doubles(v: serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    match v {
+        Value::Number(n) if !n.is_f64() => n
+            .as_f64()
+            .and_then(serde_json::Number::from_f64)
+            .map_or(Value::Number(n), Value::Number),
+        Value::Array(a) => Value::Array(a.into_iter().map(as_doubles).collect()),
+        Value::Object(o) => Value::Object(o.into_iter().map(|(k, v)| (k, as_doubles(v))).collect()),
+        other => other,
+    }
+}
+
+pub(crate) type Callback = ThreadsafeFunction<StreamEvent, ErrorStrategy::Fatal>;
+
+pub(crate) fn callback(f: &JsFunction) -> Result<Callback> {
+    f.create_threadsafe_function(0, |ctx: ThreadSafeCallContext<StreamEvent>| {
+        let v: JsUnknown = ctx.value.into_js(&ctx.env)?.into_unknown();
+        Ok(vec![v])
+    })
+}
+
+/// The handle JS holds for a running task.
+///
+/// It keeps a handle on the threadsafe function so JS can decide when the
+/// stream keeps the event loop alive: only while it awaits a batch (or the
+/// end of a closed stream). An abandoned, half-read stream then does not
+/// keep the process running.
+#[napi]
+pub struct NativeStream {
+    pub(crate) credits: Arc<Credits>,
+    pub(crate) callback: std::sync::Mutex<Option<Callback>>,
+}
+
+impl Drop for NativeStream {
+    // Collected without being finished (JS dropped the stream): stop the
+    // producer so it does not wait for credits forever.
+    fn drop(&mut self) {
+        self.credits.close();
+    }
+}
+
+#[napi]
+impl NativeStream {
+    /// Whether the stream keeps the event loop alive.
+    #[napi]
+    pub fn set_ref(&self, env: Env, referenced: bool) -> napi::Result<()> {
+        if let Some(cb) = self.callback.lock().unwrap().as_mut() {
+            if referenced {
+                cb.refer(&env)?;
+            } else {
+                cb.unref(&env)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Drop this handle's reference to the callback (after the end).
+    #[napi]
+    pub fn release(&self) {
+        self.callback.lock().unwrap().take();
+    }
+
+    /// Allow `n` more batches to be sent.
+    #[napi]
+    pub fn request(&self, n: u32) {
+        self.credits.grant(n);
+    }
+
+    /// Stop the task; no more batches are sent, then `end` arrives.
+    #[napi]
+    pub fn close(&self) {
+        self.credits.close();
+    }
+}
+
+/// Batches also flush at this many bytes of text, so a few huge entities
+/// do not wait for thousands of others.
+const MAX_BATCH_BYTES: usize = 8 << 20;
+
+/// Accumulates records into batches and sends them under flow control.
+struct Sender {
+    cb: Callback,
+    credits: Arc<Credits>,
+    batch: EntityBatch,
+    batch_size: usize,
+    last_progress: Option<Instant>,
+}
+
+impl Sender {
+    fn flush(&mut self) -> Flow {
+        if self.batch.len() == 0 {
+            return Flow::Continue;
+        }
+        if !self.credits.acquire() {
+            return Flow::Stop;
+        }
+        let b = std::mem::take(&mut self.batch);
+        self.cb
+            .call(StreamEvent::Batch(Box::new(b)), ThreadsafeFunctionCallMode::Blocking);
+        Flow::Continue
+    }
+
+    fn on_event(&mut self, e: Event<Record>) -> Flow {
+        if self.credits.is_closed() {
+            return Flow::Stop;
+        }
+        match e {
+            Event::Records(rs) => {
+                for r in rs {
+                    self.batch.push(r);
+                    if (self.batch.len() >= self.batch_size || self.batch.bytes() >= MAX_BATCH_BYTES)
+                        && self.flush() == Flow::Stop
+                    {
+                        return Flow::Stop;
+                    }
+                }
+                Flow::Continue
+            }
+            Event::Progress(p) => {
+                progress(&self.cb, &mut self.last_progress, p);
+                Flow::Continue
+            }
+        }
+    }
+}
+
+/// Send progress at most every 200 ms.
+fn progress(cb: &Callback, last: &mut Option<Instant>, p: Progress) {
+    let now = Instant::now();
+    if last.is_none_or(|t| now - t >= Duration::from_millis(200)) {
+        *last = Some(now);
+        cb.call(StreamEvent::Progress(p), ThreadsafeFunctionCallMode::NonBlocking);
+    }
+}
+
+fn handle(credits: Arc<Credits>, cb: &Callback) -> NativeStream {
+    NativeStream {
+        credits,
+        callback: std::sync::Mutex::new(Some(cb.clone())),
+    }
+}
+
+/// Run `job` on its own thread, streaming entity batches to `cb`.
+pub(crate) fn spawn_entities<F>(cb: Callback, batch_size: usize, read_ahead: u32, job: F) -> NativeStream
+where
+    F: FnOnce(&mut dyn FnMut(Event<Record>) -> Flow) -> std::result::Result<serde_json::Value, String> + Send + 'static,
+{
+    let credits = Arc::new(Credits::default());
+    credits.grant(read_ahead.max(1));
+    let h = handle(credits.clone(), &cb);
+    thread::Builder::new()
+        .name("wikidata-entities".into())
+        .spawn(move || {
+            let mut sender = Sender {
+                cb: cb.clone(),
+                credits,
+                batch: EntityBatch::default(),
+                batch_size: batch_size.max(1),
+                last_progress: None,
+            };
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&mut |e| sender.on_event(e))))
+                .unwrap_or_else(|p| Err(format!("internal error: {}", panic_message(&p))));
+            let result = result.map(|mut stats| {
+                if sender.flush() == Flow::Stop {
+                    stats["stopped"] = true.into();
+                }
+                stats
+            });
+            let event = match result {
+                Ok(stats) => StreamEvent::End(stats),
+                Err(e) => StreamEvent::Error(e),
+            };
+            cb.call(event, ThreadsafeFunctionCallMode::Blocking);
+        })
+        .expect("spawn entities thread");
+    h
+}
+
+/// Run `job` (which sends no records) on its own thread, reporting its
+/// progress (throttled) and then its end or error to `cb`. The job's
+/// progress callback says `Stop` once JS closes the stream.
+pub(crate) fn spawn_task<F>(cb: Callback, job: F) -> NativeStream
+where
+    F: FnOnce(&mut dyn FnMut(Progress) -> Flow) -> std::result::Result<serde_json::Value, String> + Send + 'static,
+{
+    let credits = Arc::new(Credits::default());
+    let h = handle(credits.clone(), &cb);
+    thread::Builder::new()
+        .name("wikidata-task".into())
+        .spawn(move || {
+            let mut last = None;
+            let mut on_progress = |p: Progress| {
+                if credits.is_closed() {
+                    return Flow::Stop;
+                }
+                progress(&cb, &mut last, p);
+                Flow::Continue
+            };
+            let event = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&mut on_progress)))
+                .unwrap_or_else(|p| Err(format!("internal error: {}", panic_message(&p))))
+                .map_or_else(StreamEvent::Error, StreamEvent::End);
+            cb.call(event, ThreadsafeFunctionCallMode::Blocking);
+        })
+        .expect("spawn task thread");
+    h
+}
+
+/// The message of a caught panic.
+pub(crate) fn panic_message(p: &(dyn std::any::Any + Send)) -> String {
+    p.downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| p.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "a worker thread panicked".into())
+}

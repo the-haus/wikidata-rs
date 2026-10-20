@@ -1,0 +1,21 @@
+[package]
+name = "wikidata-dump"
+edition.workspace = true
+version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+description = "wikidata-rs — read Wikidata JSON dumps fast: parallel bzip2 block decoding, gzip, zstd and plain JSON, from files or HTTP, in file order with bounded memory."
+keywords = ["wikidata", "bzip2", "dump", "streaming", "parallel"]
+categories = ["compression", "parser-implementations"]
+
+[dependencies]
+bzip2.workspace = true
+flate2.workspace = true
+zstd.workspace = true
+ureq.workspace = true
+memchr.workspace = true
+crc32fast.workspace = true
+crossbeam-channel.workspace = true
+thiserror.workspace = true

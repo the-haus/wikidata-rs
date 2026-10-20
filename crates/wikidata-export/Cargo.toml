@@ -1,0 +1,23 @@
+[package]
+name = "wikidata-export"
+edition.workspace = true
+version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+description = "wikidata-rs — stream filtered, normalised entities out of Wikidata dumps on every core, write compact subsets, build class indexes and count what a dump holds."
+keywords = ["wikidata", "dump", "streaming", "extract", "json"]
+categories = ["parser-implementations", "command-line-utilities"]
+
+[dependencies]
+wikidata-dump.workspace = true
+wikidata-model.workspace = true
+wikidata-filter.workspace = true
+serde.workspace = true
+memchr.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+bzip2.workspace = true

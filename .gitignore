@@ -1,0 +1,15 @@
+target/
+node_modules/
+dist/
+*.node
+*.tsbuildinfo
+.yarn/*
+!.yarn/releases
+.pnp.*
+bench/.work/
+/packages/
+/install-check/
+fixtures/*.bz2
+fixtures/*.zst
+fixtures/*.gz
+.idea/

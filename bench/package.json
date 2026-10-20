@@ -1,0 +1,14 @@
+{
+  "name": "@wikidata-rs/bench",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Benchmarks: wikidata-rs (CLI and Node) against bzip2 -dc | node line filtering.",
+  "license": "FTWPL",
+  "type": "module",
+  "scripts": {
+    "bench": "node run.mjs"
+  },
+  "dependencies": {
+    "@wikidata-rs/node": "workspace:*"
+  }
+}

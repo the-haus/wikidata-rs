@@ -1,0 +1,231 @@
+{
+  "date": "2026-10-20T15:01:36.115Z",
+  "cpus": 10,
+  "results": [
+    {
+      "group": "decode",
+      "name": "wikidata info (1 threads)",
+      "wall": 3.88,
+      "user": 3.8,
+      "sys": 0.08,
+      "rssMB": 49.72544,
+      "out": "}"
+    },
+    {
+      "group": "decode",
+      "name": "wikidata info (4 threads)",
+      "wall": 1.02,
+      "user": 4.05,
+      "sys": 0.06,
+      "rssMB": 106.020864,
+      "out": "}"
+    },
+    {
+      "group": "decode",
+      "name": "wikidata info (10 threads)",
+      "wall": 0.68,
+      "user": 4.91,
+      "sys": 0.13,
+      "rssMB": 195.182592,
+      "out": "}"
+    },
+    {
+      "group": "decode",
+      "name": "wikidata info, libbzip2 decoder (10 threads)",
+      "wall": 1.12,
+      "user": 9.43,
+      "sys": 0.1,
+      "rssMB": 167.919616,
+      "out": "}"
+    },
+    {
+      "group": "decode",
+      "name": "bzip2 -dc | node (count lines)",
+      "wall": 6.91,
+      "user": 7.27,
+      "sys": 0.41,
+      "rssMB": 156.762112,
+      "out": "{\"lines\":10990,\"matched\":0}"
+    },
+    {
+      "group": "filter",
+      "name": "wikidata cat --claim P17=Q55 (1 threads)",
+      "wall": 3.63,
+      "user": 3.71,
+      "sys": 0.07,
+      "rssMB": 62.701568,
+      "out": "59"
+    },
+    {
+      "group": "filter",
+      "name": "wikidata cat --claim P17=Q55 (4 threads)",
+      "wall": 1.01,
+      "user": 4.07,
+      "sys": 0.05,
+      "rssMB": 116.342784,
+      "out": "59"
+    },
+    {
+      "group": "filter",
+      "name": "wikidata cat --claim P17=Q55 (10 threads)",
+      "wall": 0.62,
+      "user": 4.77,
+      "sys": 0.1,
+      "rssMB": 221.577216,
+      "out": "59"
+    },
+    {
+      "group": "filter",
+      "name": "@wikidata-rs/node, summary (1 threads)",
+      "wall": 3.78,
+      "user": 3.87,
+      "sys": 0.05,
+      "rssMB": 110.231552,
+      "out": "{\"matched\":59,\"entities\":10989,\"chars\":1187}"
+    },
+    {
+      "group": "filter",
+      "name": "@wikidata-rs/node, summary (4 threads)",
+      "wall": 1.07,
+      "user": 4.21,
+      "sys": 0.06,
+      "rssMB": 167.821312,
+      "out": "{\"matched\":59,\"entities\":10989,\"chars\":1187}"
+    },
+    {
+      "group": "filter",
+      "name": "@wikidata-rs/node, summary (10 threads)",
+      "wall": 0.71,
+      "user": 5.03,
+      "sys": 0.11,
+      "rssMB": 276.8896,
+      "out": "{\"matched\":59,\"entities\":10989,\"chars\":1187}"
+    },
+    {
+      "group": "filter",
+      "name": "@wikidata-rs/node, full entity (10 threads)",
+      "wall": 0.81,
+      "user": 5.07,
+      "sys": 0.13,
+      "rssMB": 292.0448,
+      "out": "{\"matched\":59,\"entities\":10989,\"chars\":4572}"
+    },
+    {
+      "group": "filter",
+      "name": "bzip2 -dc | node (substring + JSON.parse)",
+      "wall": 7.69,
+      "user": 8.38,
+      "sys": 0.47,
+      "rssMB": 171.032576,
+      "out": "{\"lines\":10990,\"matched\":59}"
+    },
+    {
+      "group": "parse",
+      "name": "wikidata cat, every entity (1 threads)",
+      "wall": 1.19,
+      "user": 1.19,
+      "sys": 0.09,
+      "rssMB": 64.946176,
+      "out": "138624859"
+    },
+    {
+      "group": "parse",
+      "name": "wikidata cat, every entity (4 threads)",
+      "wall": 0.31,
+      "user": 1.23,
+      "sys": 0.11,
+      "rssMB": 129.941504,
+      "out": "138624859"
+    },
+    {
+      "group": "parse",
+      "name": "wikidata cat, every entity (10 threads)",
+      "wall": 0.21,
+      "user": 1.3,
+      "sys": 0.12,
+      "rssMB": 280.543232,
+      "out": "138624859"
+    },
+    {
+      "group": "parse",
+      "name": "wikidata cat, every entity, all languages (10 threads)",
+      "wall": 0.26,
+      "user": 1.23,
+      "sys": 0.16,
+      "rssMB": 248.201216,
+      "out": "168687211"
+    },
+    {
+      "group": "parse",
+      "name": "@wikidata-rs/node, summary (10 threads)",
+      "wall": 0.2,
+      "user": 1.16,
+      "sys": 0.09,
+      "rssMB": 287.145984,
+      "out": "{\"matched\":10989,\"entities\":10989,\"chars\":230625}"
+    },
+    {
+      "group": "parse",
+      "name": "@wikidata-rs/node, full entity (10 threads)",
+      "wall": 1.19,
+      "user": 2.53,
+      "sys": 0.17,
+      "rssMB": 798.457856,
+      "out": "{\"matched\":10989,\"entities\":10989,\"chars\":723385}"
+    },
+    {
+      "group": "parse",
+      "name": "node JSON.parse every line",
+      "wall": 3.17,
+      "user": 3.07,
+      "sys": 0.32,
+      "rssMB": 315.293696,
+      "out": ""
+    },
+    {
+      "group": "small",
+      "name": "wikidata cat, every entity (1 threads)",
+      "wall": 1.66,
+      "user": 1.74,
+      "sys": 0.13,
+      "rssMB": 52.903936,
+      "out": "294189753"
+    },
+    {
+      "group": "small",
+      "name": "wikidata cat, every entity (10 threads)",
+      "wall": 0.31,
+      "user": 1.72,
+      "sys": 0.19,
+      "rssMB": 293.306368,
+      "out": "294189753"
+    },
+    {
+      "group": "small",
+      "name": "@wikidata-rs/node, summary (10 threads)",
+      "wall": 0.24,
+      "user": 1.54,
+      "sys": 0.1,
+      "rssMB": 288.52224,
+      "out": "{\"matched\":400000,\"entities\":400000,\"chars\":6224390}"
+    },
+    {
+      "group": "small",
+      "name": "@wikidata-rs/node, full entity (10 threads)",
+      "wall": 1.75,
+      "user": 3.52,
+      "sys": 0.21,
+      "rssMB": 559.136768,
+      "out": "{\"matched\":400000,\"entities\":400000,\"chars\":7239049}"
+    },
+    {
+      "group": "small",
+      "name": "node JSON.parse every line",
+      "wall": 1.94,
+      "user": 1.85,
+      "sys": 0.2,
+      "rssMB": 96.845824,
+      "out": "{\"lines\":400000,\"matched\":400000}"
+    }
+  ]
+}
