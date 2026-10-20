@@ -161,6 +161,35 @@ fn extract_and_classes() {
     assert_eq!(ids(&out), ["Q1072", "Q1073"]);
     let (ok, _, err) = run(&["cat", s, "-q", "--instance-of", "Q868557", "--subclasses"]);
     assert!(!ok && err.contains("class index"), "{err}");
+
+    // The same index, built during other passes.
+    let alone = std::fs::read(&idx).unwrap();
+    let during = d.join("during.wdc");
+    let x = d.join("lexemes.jsonl");
+    let (ok, stdout, err) = run(&[
+        "extract",
+        s,
+        "-q",
+        "--type",
+        "lexeme",
+        "-o",
+        x.to_str().unwrap(),
+        "--build-classes",
+        during.to_str().unwrap(),
+    ]);
+    assert!(ok, "{err}");
+    let stats: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(stats["classIndex"]["edges"], 3);
+    assert_eq!(std::fs::read(&during).unwrap(), alone);
+    let info = d.join("info.wdc");
+    let (ok, out, _) = run(&["info", s, "-q", "--build-classes", info.to_str().unwrap()]);
+    assert!(ok);
+    assert!(out.contains("Class index:"), "{out}");
+    assert_eq!(std::fs::read(&info).unwrap(), alone);
+    let cat = d.join("cat.wdc");
+    let (ok, _, _) = run(&["cat", s, "-q", "--limit", "1", "--build-classes", cat.to_str().unwrap()]);
+    assert!(ok);
+    assert!(!cat.exists(), "a stopped pass saves no index");
 }
 
 #[test]

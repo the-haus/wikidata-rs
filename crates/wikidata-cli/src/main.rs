@@ -63,6 +63,10 @@ struct InputArgs {
     /// entity instead of failing.
     #[arg(long)]
     allow_truncated: bool,
+    /// Also build the class index during this pass (as `wikidata classes`
+    /// would) and save it to this file, when the pass is not stopped.
+    #[arg(long, value_name = "FILE")]
+    build_classes: Option<PathBuf>,
     /// No progress on stderr.
     #[arg(short, long)]
     quiet: bool,
@@ -341,6 +345,7 @@ fn scan_options(a: &InputArgs, filter: Option<Arc<wikidata_export::CompiledFilte
         threads: a.threads,
         limit: a.limit,
         allow_truncated: a.allow_truncated,
+        class_index: a.build_classes.clone(),
     }
 }
 
@@ -481,6 +486,14 @@ fn info(a: InputArgs, json: bool) -> Result<()> {
         info.largest.id,
         human_bytes(info.largest.bytes)
     );
+    if let Some(c) = &s.class_index {
+        println!(
+            "Class index:  {} ({} classes, {} subclass-of edges)",
+            c.path,
+            thousands(c.classes),
+            thousands(c.edges)
+        );
+    }
     println!(
         "Time:         {:.1} s ({:.1} MB/s in, {:.0} MB/s out, {:.0} entities/s){}",
         secs,
@@ -529,6 +542,7 @@ fn cat(a: CatArgs) -> Result<()> {
             model: a.model.build()?,
             json: true,
             summary_only: true,
+            ..Default::default()
         };
         entities(&dump, &opts, &mut sink)
     };
@@ -568,6 +582,7 @@ fn raw_lines(
                 .map(|json| wikidata_export::Record {
                     entity: Default::default(),
                     json,
+                    matched_by: Vec::new(),
                 })
                 .collect(),
         )),

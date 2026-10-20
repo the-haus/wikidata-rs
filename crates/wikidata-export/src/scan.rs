@@ -2,15 +2,17 @@
 //! filtered and turned into records on all cores, and come back in file
 //! order to a sink on the calling thread.
 
+use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use wikidata_dump::{ordered_map, resolve_threads, Chunk, Dump, ReadOptions, Result as DumpResult};
-use wikidata_filter::CompiledFilter;
+use wikidata_filter::{id_key, ClassIndex, CompiledFilter, FilterError, IdSetBuilder};
 use wikidata_model::{id_number, peek, EntityType, Peek};
 
+use crate::classes::ClassEdges;
 use crate::ExportError;
 
 /// What a sink tells the scan.
@@ -114,6 +116,25 @@ pub struct ScanStats {
     pub truncated: bool,
     /// Wall time.
     pub elapsed_ms: u64,
+    /// With `ids` in the filter, after a complete scan (not stopped, not
+    /// truncated): the requested ids the dump does not hold (deleted, or
+    /// merged into another item), in id order.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub missing_ids: Option<Vec<String>>,
+    /// The class index saved with [`ScanOptions::class_index`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub class_index: Option<SavedClassIndex>,
+}
+
+/// A class index built during a scan.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct SavedClassIndex {
+    /// Where it was saved.
+    pub path: String,
+    /// Classes with at least one parent.
+    pub classes: u64,
+    /// Subclass-of edges.
+    pub edges: u64,
 }
 
 /// Options shared by every scan.
@@ -128,6 +149,10 @@ pub struct ScanOptions {
     /// End at the last whole entity of a truncated input instead of
     /// failing (for partial downloads; `truncated` is set in the stats).
     pub allow_truncated: bool,
+    /// Also build the class index, as [`crate::build_class_index`] does,
+    /// and save it to this file when the scan ends without being stopped
+    /// (the filter cannot use it in the same scan).
+    pub class_index: Option<PathBuf>,
 }
 
 /// Per-chunk counters, made on the workers.
@@ -139,6 +164,10 @@ pub(crate) struct ChunkCounts {
     pub types: TypeCounts,
     pub max_ids: [u64; 5],
     pub largest: (usize, String),
+    /// Keys of the filter's `ids` seen in the chunk.
+    pub seen: Vec<i64>,
+    /// Subclass-of edges, with `class_index`.
+    pub edges: Vec<(u32, u32)>,
 }
 
 /// What a worker makes of a matching line: `None` to drop it.
@@ -150,11 +179,19 @@ pub(crate) struct ScanResult {
     pub largest: (usize, String),
 }
 
+/// What a worker does besides filtering and `work`.
+struct Side<'a> {
+    track_largest: bool,
+    /// The filter whose `ids` are tracked.
+    track_ids: Option<&'a CompiledFilter>,
+    classes: Option<&'a ClassEdges>,
+}
+
 fn process<T>(
     chunk: DumpResult<Chunk>,
     filter: Option<&CompiledFilter>,
     work: &Work<T>,
-    track_largest: bool,
+    side: &Side<'_>,
 ) -> Result<(Vec<T>, ChunkCounts), ExportError> {
     let chunk = chunk?;
     let mut out = Vec::new();
@@ -173,8 +210,21 @@ fn process<T>(
             let slot = &mut c.max_ids[p.kind.code() as usize];
             *slot = (*slot).max(n);
         }
-        if track_largest && line.len() > c.largest.0 {
+        if side.track_largest && line.len() > c.largest.0 {
             c.largest = (line.len(), p.id.to_string());
+        }
+        if let Some(f) = side.track_ids {
+            if let Some(k) = id_key(p.id).filter(|&k| f.requests(k)) {
+                c.seen.push(k);
+            }
+        }
+        if let Some(classes) = side.classes {
+            if let Some(edges) = classes
+                .read(line, &p)
+                .map_err(|e| ExportError::Invalid(format!("{}: {e}", p.id)))?
+            {
+                c.edges.extend(edges);
+            }
         }
         if let Some(f) = filter {
             match f.pre(line, Some(&p)) {
@@ -199,10 +249,12 @@ fn process<T>(
     Ok((out, c))
 }
 
-/// Run a scan (see the module docs).
+/// Run a scan (see the module docs). `prefilter`: whether lines go to
+/// `work` only once `opts.filter` matched them (else `work` filters).
 pub(crate) fn scan<T: Send + 'static>(
     dump: &Dump,
     opts: &ScanOptions,
+    prefilter: bool,
     work: Arc<Work<T>>,
     track_largest: bool,
     sink: &mut dyn FnMut(Event<T>) -> Flow,
@@ -216,9 +268,20 @@ pub(crate) fn scan<T: Send + 'static>(
     let read = chunks.stats();
     let total = chunks.input_len().or(dump.len());
     let filter = opts.filter.clone();
+    let track_ids = filter.clone().filter(|f| f.has_ids());
+    let classes = opts.class_index.as_ref().map(|_| Arc::new(ClassEdges::new()));
+    let worker_classes = classes.clone();
+    let worker_track = track_ids.clone();
     let results = ordered_map(chunks, threads, threads * 2, move |c| {
-        process(c, filter.as_deref(), &*work, track_largest)
+        let side = Side {
+            track_largest,
+            track_ids: worker_track.as_deref(),
+            classes: worker_classes.as_deref(),
+        };
+        process(c, filter.as_deref().filter(|_| prefilter), &*work, &side)
     });
+    let seen = IdSetBuilder::new();
+    let mut edges = Vec::new();
 
     let mut stats = ScanStats {
         compression: dump.compression().as_str(),
@@ -238,6 +301,8 @@ pub(crate) fn scan<T: Send + 'static>(
     };
     for r in results {
         let (mut records, c) = r?;
+        seen.insert_all(&c.seen);
+        edges.extend(c.edges);
         stats.entities += c.entities;
         stats.parsed += c.parsed;
         stats.types.merge(&c.types);
@@ -276,10 +341,36 @@ pub(crate) fn scan<T: Send + 'static>(
     stats.blocks = read.blocks.load(Ordering::Relaxed);
     stats.streams = read.streams.load(Ordering::Relaxed);
     stats.truncated = read.truncated.load(Ordering::Relaxed);
+    if let Some(f) = track_ids.filter(|_| !stats.stopped && !stats.truncated) {
+        stats.missing_ids = Some(f.missing_ids(&seen.freeze()));
+    }
+    if let (Some(path), false) = (&opts.class_index, stats.stopped) {
+        let index = ClassIndex::from_edges(edges, dump.input().file_name());
+        save_atomically(&index, path)?;
+        stats.class_index = Some(SavedClassIndex {
+            path: path.display().to_string(),
+            classes: index.len() as u64,
+            edges: index.edges() as u64,
+        });
+    }
     stats.elapsed_ms = start.elapsed().as_millis() as u64;
     Ok(ScanResult {
         stats,
         max_ids,
         largest,
     })
+}
+
+/// Save through a temporary file beside `path`, so that `path` either does
+/// not exist or holds a whole index.
+fn save_atomically(index: &ClassIndex, path: &std::path::Path) -> Result<(), ExportError> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(format!(".{}.tmp", std::process::id()));
+    let tmp = PathBuf::from(tmp);
+    index.save(&tmp)?;
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        FilterError::Io(format!("{}: {e}", path.display()))
+    })?;
+    Ok(())
 }

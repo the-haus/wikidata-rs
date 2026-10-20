@@ -130,6 +130,23 @@ with `wikidata info` (10 threads):
 | `.jsonl.gz` (level 6) | 1.0 s | 74 MB | 0.49 s |
 | `.jsonl` | 0.8 s | 520 MB | 0.09 s |
 
+### 0.2.0 against 0.1.0 (the head, best of 5 interleaved runs, load 4–5)
+
+| Task | 0.1.0 | 0.2.0 |
+|---|---:|---:|
+| `wikidata info` | 0.582 s | 0.576 s |
+| `cat --claim P17=Q55` | 0.610 s | 0.596 s |
+| `cat --ids-file` (1M ids, 995,000 of them missing) | 0.644 s | 0.653 s |
+| the class index and `info` | 1.242 s (`classes`, then `info`) | 0.567 s (`info --build-classes`) |
+
+Tracking the ids an `ids` filter misses and reading P279 edges for
+`--build-classes` cost nothing measurable here (differences are within
+the noise), and the index built during `info` is byte-identical to
+`wikidata classes`. Named filters cost only for the entities that match:
+four branches, one of them (`sitelink: enwiki`) matching 10,441 of the
+10,989 entities, took 742 ms through Node against 716 ms for the same
+filter unnamed (+3.7%).
+
 ## Reading the numbers
 
 - Everything that reads bzip2 is bound by decompression: filtering and

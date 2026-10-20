@@ -1,6 +1,6 @@
 {
   "name": "@wikidata-rs/node",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Stream Wikidata JSON dumps in Node.js: parallel bzip2, filters before parsing, typed and normalised entities, compact subsets, with bounded memory (Rust, N-API).",
   "license": "SEE LICENSE IN LICENSE",
   "packageManager": "yarn@4.5.1",
@@ -22,12 +22,19 @@
   ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "module": "dist/esm/index.js",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.js"
-    }
+      "import": {
+        "types": "./dist/esm/index.d.ts",
+        "default": "./dist/esm/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist/",
@@ -66,7 +73,7 @@
   "scripts": {
     "build:native": "napi build --platform --release --js false --dts native.generated.d.ts",
     "build:native:debug": "napi build --platform --js false --dts native.generated.d.ts",
-    "build:ts": "tsc -p tsconfig.json && node scripts/copy-native.mjs",
+    "build:ts": "tsc -p tsconfig.json && tsc -p tsconfig.esm.json && node scripts/copy-native.mjs",
     "build": "yarn run build:native && yarn run build:ts",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "test": "vitest run",
@@ -81,7 +88,9 @@
   "devDependencies": {
     "@napi-rs/cli": "^2.18.4",
     "@types/node": "^22.7.4",
+    "esbuild": "^0.21.5",
     "typescript": "^5.6.2",
+    "vite": "^5.4.21",
     "vitest": "^2.1.1"
   }
 }

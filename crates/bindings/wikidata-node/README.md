@@ -91,7 +91,7 @@ system is downloaded.
 | | Supported | Notes |
 |---|---|---|
 | Node.js | **18 or newer** | N-API version 6. Tested on Node 20, 22 and 24 in CI; every release is also installed and run on the oldest supported Node on every platform before it is published (18; 20 on Windows arm64). |
-| Module systems | ESM and CommonJS | `import` and `require()` both work. |
+| Module systems | ESM and CommonJS | `import` loads an ESM build and `require()` a CommonJS one; both bundle (see [Bundlers](#bundlers-esbuild-vite-webpack-nextjs)). |
 | TypeScript | optional | Declarations are bundled; no `@types` package is needed. |
 
 ### Supported platforms
@@ -173,6 +173,7 @@ fields. Benchmarks for the CLI and the method are in the repository's
 | `image` | P18 | a Commons file name |
 | `website` | P856 | |
 | `externalIds` | see `EXTERNAL_IDS` | `{ musicbrainzArtist, discogsArtist, osmRelation, geonames, viaf, … }` |
+| `matchedBy` | the filter | the [named filters](#named-filters) that match the entity, `[]` without names |
 | `entity` | | the full `Entity`, parsed on first access |
 | `json` | | its JSON text |
 
@@ -191,6 +192,22 @@ dump.entities({
   json: true,                      // false: summary fields only (faster)
 });
 ```
+
+Languages and sitelinks can also be chosen per entity, from the values of
+its claims: each venue's label in its own country's language, and English,
+without keeping every language of every country for every entity.
+
+```ts
+dump.entities({
+  languages: { by: "P17", map: { Q55: ["nl"], Q183: ["de"], Q31: ["nl", "fr"] }, always: ["en", "mul"] },
+  sitelinks: { by: "P17", map: { Q55: ["nlwiki"], Q183: ["dewiki"] }, always: ["enwiki"] },
+});
+// A Dutch item keeps nl, en, mul (label: nl first); a German one de, en, mul;
+// an item without a mapped country en, mul.
+```
+
+`by` takes one property or several (`["P17", "P495"]`); the values are read
+from the truthy statements, whether or not `properties` keeps the claims.
 
 Every claim value carries a `type`:
 
@@ -230,6 +247,62 @@ Claim filters ignore deprecated statements. Most lines are decided from
 their raw bytes: a claim filter rejects every line that does not contain
 `"P17":[` and `"id":"Q55"`, without parsing it.
 
+#### Large `ids` filters
+
+A long list of items is cheaper as a typed array of item numbers (`42` for
+`Q42`) than as strings: it crosses to the native side without being written
+out as JSON (a million ids cost ~0.1 MB of JS heap instead of ~36 MB).
+`Uint32Array` and `Int32Array` are passed without a copy; other typed
+arrays are converted.
+
+```ts
+const known = Uint32Array.from(knownQids, (q) => Number(q.slice(1)));
+dump.entities({ filter: { ids: known } });
+```
+
+#### Named filters
+
+Name the branches of one pass, and each entity says which of them it
+matched, every one (not only the first):
+
+```ts
+const stream = dump.entities({
+  filter: {
+    any: {
+      venue: { instanceOf: { classes: ["Q8719053"], subclasses: true } },
+      festival: { instanceOf: { classes: ["Q868557"], subclasses: true } },
+      artist: { hasProperty: "P434" },
+      known: { ids: known },
+    },
+  },
+  classIndex,
+});
+for await (const e of stream) e.matchedBy; // ["venue", "known"]
+```
+
+`any` and `all` take an object of named filters, and any filter can carry
+a `name` (`{ name: "dutch", claim: "P17=Q55" }`). A named filter is
+reported wherever it is in the filter, when the entity matches the whole
+filter. `matchedBy` lists them in the order the filter names them.
+
+#### Ids the dump lacks
+
+With `ids` in the filter (anywhere in it), `stats.missingIds` lists the
+requested ids the dump does not hold: deleted, or merged into another item
+(follow the redirect with the Wikidata API). It is only set after a
+complete pass, not one stopped by `limit`, `close()`, a signal, or
+truncated with `allowTruncated`.
+
+```ts
+const stream = dump.entities({ filter: { ids: known } });
+for await (const e of stream) refresh(e);
+const { missingIds } = await stream.stats; // ["Q123", …] or [] (undefined if cut short)
+```
+
+The missing items also come as `stats.missingItemNumbers` (a `Uint32Array`);
+`missingIds` is made from it only when read, so a pass that misses many ids
+costs no more JS heap than its `ids` did.
+
 ### Subclasses
 
 "Instance of music festival, or of any subclass of it" needs the class
@@ -252,6 +325,27 @@ for await (const e of dump.entities({
 })) {
   // …
 }
+```
+
+`ClassIndex.build(pathOrUrl, options)` opens a dump and builds its index in
+one call.
+
+Building the index costs a pass of its own. To build it as a by-product of
+a pass you make anyway, give that pass `buildClassIndex`
+(`entities()`, `extract()` and `fileInfo()` take it). The index is saved
+when the pass ends without being stopped, and `stats.classIndex` reports
+`{ path, classes, edges }`. The file is identical to `ClassIndex.build` on
+the same dump, and is written to a temporary name first, so it exists only
+when it is whole. The pass's own filter cannot use it yet; the next pass can.
+
+```ts
+const stats = await dump.extract({
+  output: "subset.jsonl.zst",
+  filter: { hasProperty: "P434" },
+  buildClassIndex: "wikidata-20261012-classes.wdc",
+});
+stats.classIndex; // { path: "wikidata-20261012-classes.wdc", classes: …, edges: … }
+// the next pass: classIndex: await ClassIndex.load("wikidata-20261012-classes.wdc")
 ```
 
 ### Subsets
@@ -289,11 +383,23 @@ info.bytesIn; info.bytesOut; info.blocks; info.elapsedMs;
 `openDump(url)` streams `http://` and `https://` URLs without a temporary
 file. When the connection drops, it reconnects with a `Range` request (and
 `If-Range`, so a file that changed on the server is an error, not a
-corrupt read). `openDump(url, { userAgent, retries })` sets the
-`User-Agent` (default `wikidata-rs/<version> (https://github.com/the-haus/wikidata-rs)`,
-as Wikimedia asks) and the reconnect attempts. A truncated download is an
-error; `allowTruncated: true` reads a partial file up to its last whole
-entity and sets `stats.truncated`.
+corrupt read). `userAgent` sets the `User-Agent` on every request,
+reconnects included (default `wikidata-rs/<version> (https://github.com/the-haus/wikidata-rs)`;
+Wikimedia asks for a descriptive one with contact details), and `retries`
+the reconnect attempts per position (default 8; 0 fails on the first
+dropped connection). `openDump` takes them, and so do the functions that
+open a dump themselves:
+
+```ts
+const http = { userAgent: "Festimap/1.0 (ops@example.org)", retries: 20 };
+streamEntities(url, { ...http, filter });
+await extract(url, { ...http, output: "subset.jsonl.zst" });
+await fileInfo(url, http);
+await ClassIndex.build(url, http);
+```
+
+A truncated download is an error; `allowTruncated: true` reads a partial
+file up to its last whole entity and sets `stats.truncated`.
 
 ### Streams
 
@@ -302,8 +408,9 @@ entity and sets `stats.truncated`.
 - `for await (const e of stream)` or `for await (const batch of stream.batches())`
 - `stream.toArray()`, `stream.map(fn)`, `stream.filter(fn)`, `stream.toReadable()`
 - `stream.stats`: a promise of the counters (`entities`, `matched`,
-  `parsed`, `bytesIn`, `bytesOut`, `types`, `stopped`, `truncated`, …),
-  resolved when the stream ends
+  `parsed`, `bytesIn`, `bytesOut`, `types`, `stopped`, `truncated`, …,
+  and `missingIds` and `classIndex` when they apply), resolved when the
+  stream ends
 - `stream.close()`: stop early (breaking out of a loop does this too)
 - options `limit`, `onProgress`, `signal` (an `AbortSignal`), `batchSize`
   (default 1024) and `readAhead` (default 2), `threads` (default: all
@@ -328,10 +435,10 @@ about 12 bytes per subclass-of edge.
 |---|---|
 | `openDump(pathOrUrl, OpenOptions?)` → `Promise<DumpReader>` | Open a dump (looks at its first bytes). |
 | `DumpReader` | `.input`, `.compression`, `.size`, `.entities(opts)`, `.extract(opts)`, `.fileInfo(opts)`, `.classIndex(opts)` |
-| `streamEntities(pathOrUrl, EntityOptions)` | Entities, opening the dump when iteration starts. |
-| `extract(pathOrUrl, ExtractOptions)` → `Promise<ExtractStats>` | A subset. |
-| `fileInfo(pathOrUrl, CommonOptions)` → `Promise<FileInfo>` | What a dump holds. |
-| `ClassIndex` | `.load(path)`, `.save(path)`, `.size`, `.edges`, `.source`, `.parents(id)`, `.subclassesOf(ids)`, `.isSubclassOf(id, ancestor)` |
+| `streamEntities(pathOrUrl, EntityOptions & OpenOptions)` | Entities, opening the dump when iteration starts. |
+| `extract(pathOrUrl, ExtractOptions & OpenOptions)` → `Promise<ExtractStats>` | A subset. |
+| `fileInfo(pathOrUrl, CommonOptions & OpenOptions)` → `Promise<FileInfo>` | What a dump holds. |
+| `ClassIndex` | `.build(pathOrUrl, ClassIndexOptions & OpenOptions)`, `.load(path)`, `.save(path)`, `.size`, `.edges`, `.source`, `.parents(id)`, `.subclassesOf(ids)`, `.isSubclassOf(id, ancestor)` |
 | `EntityStream<T>` | See [Streams](#streams). |
 | `EXTERNAL_IDS`, `externalIdUrl(key, value)` | The external identifier table and URLs. |
 | `version()` | The version of the loaded native library. |
@@ -346,9 +453,9 @@ them. The main types are:
 - **Entities**: `Entity`, `Statement`, `Snaks`, `Sitelink`, `Form`,
   `Sense`, `Rank`, `EntityType`, and `Value` = the union of `TimeValue`,
   `QuantityValue`, `CoordinateValue` and the other value shapes.
-- **Filters**: `Filter`.
-- **Options**: `OpenOptions`, `CommonOptions`, `EntityOptions`,
-  `ExtractOptions`, `ClassIndexOptions`.
+- **Filters**: `Filter`, `ItemNumbers`.
+- **Options**: `OpenOptions`, `CommonOptions`, `EntityOptions` (with
+  `ByClaim`), `ExtractOptions`, `ClassIndexOptions`.
 - **Results**: `ScanStats` (with `TypeCounts`), `ExtractStats`, `FileInfo`.
 - **Progress**: `Progress`.
 
@@ -395,11 +502,36 @@ The Linux distribution is older than glibc 2.31. Upgrade the base image
 (Debian 11, Ubuntu 20.04 or later), or use an Alpine image, which gets the
 musl build.
 
-### Bundlers (webpack, esbuild, Vite, Next.js)
+### Bundlers (esbuild, Vite, webpack, Next.js)
 
-The package loads a native `.node` addon, so it must stay external to the
-bundle. Mark it as an external, or use `serverExternalPackages` in
-Next.js.
+The package bundles for Node.js targets without being marked external: the
+ESM build (`import`) and the CommonJS build (`require()`) both load the
+native addon at run time with a `require` that bundlers leave alone. This
+is tested with esbuild (ESM and CommonJS output) and Vite's SSR build.
+Other bundlers are not tested; if one tries to bundle the `.node` file,
+mark the package external.
+The addon itself is not bundled. At run time it is found in the platform
+package (`@wikidata-rs/node-<platform>`) in a `node_modules` beside or above
+the bundle, or at the path in `WIKIDATA_RS_NODE_BINARY`:
+
+```sh
+# e.g. a Docker image with the bundle and only the binary
+WIKIDATA_RS_NODE_BINARY=/app/wikidata-node.linux-x64-gnu.node node dist/ingest.mjs
+```
+
+Tools that locate the package's directory can resolve
+`@wikidata-rs/node/package.json`. Marking the package external still works
+too (`serverExternalPackages` in Next.js).
+
+### Two copies of the package
+
+`import` and `require()` load separate builds. A process that does both
+(an ESM app using a CommonJS library that also requires this package) has
+two copies of its classes, so `err instanceof WikidataError` is false for
+an error thrown by the other copy, and a `ClassIndex` from one cannot be
+passed to the other. Check `err.name === "WikidataError"` instead, and use
+one module system for the package within a process. The native library is
+loaded once either way.
 
 ## Building from source
 
@@ -427,6 +559,7 @@ Runnable scripts are in [`examples/`](https://github.com/the-haus/wikidata-rs/tr
 |---|---|
 | `music-festivals.mjs` | Music festivals (and every subclass) in a country, as CSV, with a saved class index. |
 | `weekly-subset.mjs` | A `.jsonl.zst` subset from the latest dump, with progress. |
+| `weekly-refresh.mjs` | One pass for artists, festivals and known ids: named branches, item-number ids, labels by country, missing ids, and the class index built on the first run. |
 | `places.mjs` | Places with coordinates in a country, as GeoJSON lines. |
 | `external-ids.mjs` | Items mapped to MusicBrainz, Discogs and Spotify, with URLs. |
 | `file-info.mjs` | What a dump holds. |

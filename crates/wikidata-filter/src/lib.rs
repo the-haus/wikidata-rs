@@ -4,10 +4,11 @@
 pub mod classes;
 pub mod filter;
 pub mod ids;
+mod json;
 
 pub use classes::ClassIndex;
 pub use filter::{CompiledFilter, Filter, Pre};
-pub use ids::{id_key, IdSet, IdSetBuilder};
+pub use ids::{id_from_key, id_key, IdSet, IdSetBuilder};
 
 /// Errors in filters and class indexes.
 #[derive(Debug, thiserror::Error)]

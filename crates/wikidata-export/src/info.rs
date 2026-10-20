@@ -63,7 +63,7 @@ pub fn file_info(
         crate::Event::Progress(p) => progress(p),
         crate::Event::Records(_) => Flow::Continue,
     };
-    let r = scan(dump, opts, work, true, &mut sink)?;
+    let r = scan(dump, opts, true, work, true, &mut sink)?;
     let m = r.max_ids;
     Ok(FileInfo {
         input: dump.input().display(),

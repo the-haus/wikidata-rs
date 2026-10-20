@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { extract, openDump, streamEntities, WikidataError } from "../ts/index.js";
+import { ClassIndex, extract, fileInfo, openDump, streamEntities, WikidataError } from "../ts/index.js";
 import { sample, tmp } from "./helpers.js";
 
 describe("robustness", () => {
@@ -76,6 +76,7 @@ describe("http", () => {
   let server: Server;
   let base: string;
   let requests = 0;
+  let agents: (string | undefined)[] = [];
   let body: Buffer;
   /** Responses that close the connection early, after this many bytes. */
   let dropsLeft = 0;
@@ -85,6 +86,7 @@ describe("http", () => {
     body = readFileSync(join(dir, "s.json.bz2"));
     server = createServer((req, res) => {
       requests++;
+      agents.push(req.headers["user-agent"]);
       if (req.url?.includes("missing")) {
         res.writeHead(404).end();
         return;
@@ -122,6 +124,37 @@ describe("http", () => {
     expect(all).toHaveLength(41);
     expect((await stream.stats).bytesIn).toBe(body.length);
     expect(requests).toBeGreaterThanOrEqual(4);
+  });
+
+  it("sends the given User-Agent on every request, reconnects included", async () => {
+    const userAgent = "Festimap/1.0 (ops@example.org)";
+    const url = `${base}/wikidata-test-all.json.bz2`;
+    for (const run of [
+      () => streamEntities(url, { userAgent, json: false }).toArray(),
+      () => fileInfo(url, { userAgent }),
+      () => extract(url, { userAgent, output: join(tmp(), "x.jsonl") }),
+      () => ClassIndex.build(url, { userAgent }),
+    ]) {
+      requests = 0;
+      agents = [];
+      dropsLeft = 2;
+      await run();
+      expect(requests).toBeGreaterThanOrEqual(4);
+      expect(agents).toEqual(Array(requests).fill(userAgent));
+    }
+    agents = [];
+    await streamEntities(url, { limit: 1 }).toArray();
+    expect(agents[0]).toMatch(/^wikidata-rs\//);
+  });
+
+  it("fails on the first dropped connection with retries: 0", async () => {
+    const url = `${base}/wikidata-test-all.json.bz2`;
+    requests = 0;
+    dropsLeft = 1;
+    await expect(streamEntities(url, { retries: 0, json: false }).toArray()).rejects.toThrow(/after 0 retries/);
+    requests = 0;
+    dropsLeft = 1;
+    expect(await streamEntities(url, { retries: 1, json: false }).toArray()).toHaveLength(41);
   });
 
   it("rejects missing URLs", async () => {

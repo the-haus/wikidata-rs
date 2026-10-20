@@ -163,6 +163,18 @@ impl EntityType {
             EntityType::EntitySchema => 4,
         }
     }
+
+    /// The type of a [`EntityType::code`].
+    pub fn from_code(c: u8) -> Option<EntityType> {
+        Some(match c {
+            0 => EntityType::Item,
+            1 => EntityType::Property,
+            2 => EntityType::Lexeme,
+            3 => EntityType::MediaInfo,
+            4 => EntityType::EntitySchema,
+            _ => return None,
+        })
+    }
 }
 
 /// A text in a language.

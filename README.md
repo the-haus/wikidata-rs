@@ -53,7 +53,7 @@ same design.
 |---|---|
 | **Fast reading** | bzip2 is cut at its bit-aligned block boundaries and the blocks are decoded on every core by a decoder that is 1.9× faster than libbzip2, in file order. gzip and zstd decode on one thread, pipelined with everything else; plain JSON and JSON lines are read as they are. |
 | **Files or URLs** | A path, or an `http(s)://` URL that is streamed (no temporary file) and resumed with `Range` requests when the connection drops. |
-| **Filters before parsing** | `ids` (a compact id set), `type`, `hasProperty`, `claim` (`P17=Q55`), `instanceOf` (with subclasses, through a class index built in one pass), `sitelink`, combined with `all` / `any` / `not`. Lines are rejected from their first bytes and SIMD substring search; only possible matches are parsed. |
+| **Filters before parsing** | `ids` (a compact id set; from Node, a typed array of item numbers), `type`, `hasProperty`, `claim` (`P17=Q55`), `instanceOf` (with subclasses, through a class index built in one pass, or as a by-product of any other pass), `sitelink`, combined with `all` / `any` / `not`. Named branches report which of them each entity matched, and an `ids` filter reports the ids the dump lacks. Lines are rejected from their first bytes and SIMD substring search; only possible matches are parsed. |
 | **Organised output** | A stable JSON shape with typed values, language fallback, sitelink URLs, rank handling and derived fields, computed in Rust. |
 | **Subsets** | `extract` writes the matching entities' original lines as `.jsonl.zst` (recommended), `.json.bz2` (Wikimedia's own layout), `.json.gz`, … compressed on every core, readable by this package and by every common tool. |
 | **Streaming by design** | Every stage runs in parallel or pipelined; a slow consumer slows the reader instead of filling memory (credit-based flow control into Node.js). |
@@ -125,6 +125,7 @@ wikidata cat subset.jsonl.zst --id Q42
 
 # Instances of music festival or any of its subclasses (needs the class index)
 wikidata classes $DUMP -o classes.wdc                                  # one pass; ~20 MB file
+wikidata extract $DUMP --has P434 -o artists.jsonl.zst --build-classes classes.wdc  # or during another pass
 wikidata cat subset.jsonl.zst --instance-of Q868557 --subclasses --classes classes.wdc
 ```
 

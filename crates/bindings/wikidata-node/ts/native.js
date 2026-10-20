@@ -9,7 +9,10 @@
 //   - macOS:       wikidata-node.darwin-arm64.node  (no ABI suffix)
 //
 // Published installs resolve the binary through an optional platform
-// subpackage named `@wikidata-rs/node-<triple>`.
+// subpackage named `@wikidata-rs/node-<triple>`. `WIKIDATA_RS_NODE_BINARY`
+// names a binary to load instead (for bundled apps that ship it apart).
+//
+// native.esm.js is the same loader for the ESM build; keep them in step.
 
 "use strict";
 
@@ -48,6 +51,8 @@ function candidateTriples() {
 }
 
 function loadNative() {
+  const override = process.env.WIKIDATA_RS_NODE_BINARY;
+  if (override) return require(override);
   const triples = candidateTriples();
   const localCandidates = [...triples.map((t) => `wikidata-node.${t}.node`), "wikidata-node.node"];
   for (const name of localCandidates) {
@@ -68,7 +73,7 @@ function loadNative() {
     `@wikidata-rs/node: no native binary found for ${platform}-${arch}. ` +
       `Tried local: ${localCandidates.join(", ")}. ` +
       `Tried npm: ${subpackageNames.join(", ")}. ` +
-      "For local development run `yarn build` in crates/bindings/wikidata-node.",
+      "Set WIKIDATA_RS_NODE_BINARY to the binary's path, or, for local development, run `yarn build` in crates/bindings/wikidata-node.",
   );
 }
 

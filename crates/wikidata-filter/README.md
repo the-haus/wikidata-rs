@@ -18,6 +18,10 @@ assert!(!f.matches_line(line, wikidata_model::peek(line).as_ref())?);
 
 - `ids`, `type`, `hasProperty`, `claim`, `instanceOf` (with subclasses),
   `sitelink`, with `all` / `any` / `not`, from JSON or built in Rust.
+  `ids` also takes item numbers (`Filter::ItemNumbers`, or
+  `{"ids": {"$items": k}}` with `Filter::from_json_with`).
+- Named filters (`{"any": {"venue": …}}`, `{"name": "venue", …}`):
+  `matched_names` tells which of them an entity matches.
 - Decided first from raw bytes (the type and id at the head of the line,
   memchr/Aho–Corasick needles for claims and sitelinks), three-valued;
   the rest after a probe parse of only the filter's properties and sites.

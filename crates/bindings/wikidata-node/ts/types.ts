@@ -213,6 +213,12 @@ export interface EntityRecord {
   /** P856. */
   readonly website: string | null;
   readonly externalIds: Partial<Record<ExternalIdKey, string>>;
+  /**
+   * The named filters that match it (`{ any: { venue: …, festival: … } }`
+   * or `{ name: "venue", … }`), every one of them, wherever they are in
+   * the filter; `[]` when the filter names none.
+   */
+  readonly matchedBy: string[];
   /** The full entity (parsed once, on first access; needs `json: true`, the default). */
   readonly entity: Entity;
   /** The full entity's JSON text. */
@@ -222,22 +228,45 @@ export interface EntityRecord {
 }
 
 /**
+ * Item numbers (`42` for `Q42`) in a typed array, for large `ids` filters:
+ * passed to the native side as numbers, not as a million strings.
+ * `Uint32Array` and `Int32Array` are passed without a copy.
+ */
+export type ItemNumbers =
+  | Uint32Array
+  | Int32Array
+  | Uint16Array
+  | Int16Array
+  | Uint8Array
+  | Int8Array
+  | Float64Array
+  | Float32Array
+  | BigUint64Array
+  | BigInt64Array;
+
+/**
  * Which entities match. Objects with several keys, and arrays, mean all
- * of them.
+ * of them. `any` and `all` also take an object of named filters, and any
+ * filter can carry a `name`: an {@link EntityRecord}'s `matchedBy` lists
+ * the named filters that match it.
  *
  * ```ts
  * { claim: "P17=Q55" }
  * { instanceOf: { classes: ["Q868557"], subclasses: true } }   // needs classIndex
  * { any: [{ hasProperty: ["P434"] }, { sitelink: "nlwiki" }] }
+ * { any: { venue: { instanceOf: "Q8719053" }, artist: { hasProperty: "P434" } } }
+ * { ids: Uint32Array.of(42, 64) }                                // Q42, Q64
  * ```
  */
 export type Filter =
   | Filter[]
   | {
-      all?: Filter[];
-      any?: Filter[];
+      /** Reported in `matchedBy` when this filter matches. */
+      name?: string;
+      all?: Filter[] | Record<string, Filter>;
+      any?: Filter[] | Record<string, Filter>;
       not?: Filter;
-      ids?: string | string[];
+      ids?: string | string[] | ItemNumbers;
       type?: EntityType | EntityType[];
       hasProperty?: string | string[];
       claim?: string | { property: string; values?: string[] } | Record<string, string[]>;
@@ -295,6 +324,18 @@ export interface ScanStats {
   /** The input was truncated (only with `allowTruncated`). */
   truncated: boolean;
   elapsedMs: number;
+  /**
+   * With `ids` in the filter (anywhere in it), after a complete pass (not
+   * stopped by `limit`, `close()` or a signal, not truncated): the
+   * requested ids the dump does not hold (deleted, or merged into another
+   * item), in id order. Absent otherwise. Made from
+   * {@link ScanStats.missingItemNumbers} on first access.
+   */
+  missingIds?: string[];
+  /** The missing items of {@link ScanStats.missingIds} as numbers (`42` for `Q42`), cheap to hold when there are many. */
+  missingItemNumbers?: Uint32Array;
+  /** The class index saved with `buildClassIndex`. */
+  classIndex?: { path: string; classes: number; edges: number };
 }
 
 /** Options every task takes. */
@@ -309,6 +350,12 @@ export interface CommonOptions {
   limit?: number;
   /** Read a truncated dump (a partial download) up to its last whole entity instead of failing. */
   allowTruncated?: boolean;
+  /**
+   * Also build the class index, as {@link ClassIndex.build} would, and save
+   * it to this file when the pass ends without being stopped (`stats.classIndex`
+   * says so). The filter cannot use it in the same pass; the next one can.
+   */
+  buildClassIndex?: string | URL;
   /** Progress, about every 200 ms, and a last event with the final totals. */
   onProgress?: (p: Progress) => void;
   /** Abort the task. */
@@ -320,12 +367,32 @@ export interface ClassIndexLike {
   readonly _id: number;
 }
 
+/**
+ * Languages or sites chosen per entity by its claims. With
+ * `{ by: "P17", map: { Q55: ["nl"], Q183: ["de"] }, always: ["en", "mul"] }`
+ * a Dutch item keeps `nl`, `en`, `mul` and a German one `de`, `en`, `mul`.
+ * The values are read from the entity's truthy statements (the property
+ * need not be among `properties`).
+ */
+export interface ByClaim {
+  /** The properties whose values choose (`"P17"`, `["P17", "P495"]`). */
+  by: string | string[];
+  /** Item id → languages (in fallback order) or sites. */
+  map: Record<string, string[]>;
+  /** Kept for every entity, after the chosen ones. */
+  always?: string[];
+}
+
 /** Options for `entities()`. */
 export interface EntityOptions extends CommonOptions {
-  /** Languages to keep, in fallback order for `label` and `description` (default: all, fallback `en`, `mul`). */
-  languages?: string[];
-  /** Sites to keep sitelinks for (default: all). */
-  sitelinks?: string[];
+  /**
+   * Languages to keep, in fallback order for `label` and `description`
+   * (default: all, fallback `en`, `mul`), or a {@link ByClaim} rule to
+   * choose them per entity.
+   */
+  languages?: string[] | ByClaim;
+  /** Sites to keep sitelinks for (default: all), or a {@link ByClaim} rule. */
+  sitelinks?: string[] | ByClaim;
   /** Properties to keep claims for (default: all). Derived fields are computed anyway. */
   properties?: string[];
   /** Keep labels (default true). */
@@ -375,7 +442,7 @@ export interface FileInfo extends ScanStats {
   largest: { id: string; bytes: number };
 }
 
-/** Options for `classIndex()`. */
+/** Options for `classIndex()` and `ClassIndex.build()`. */
 export interface ClassIndexOptions {
   threads?: number;
   allowTruncated?: boolean;
@@ -383,7 +450,10 @@ export interface ClassIndexOptions {
   signal?: AbortSignal;
 }
 
-/** Options for `openDump()`. */
+/**
+ * Options for `openDump()`, also taken by the functions that open a dump
+ * themselves (`streamEntities`, `extract`, `fileInfo`, `ClassIndex.build`).
+ */
 export interface OpenOptions {
   /** HTTP `User-Agent` (default `wikidata-rs/<version> (https://github.com/the-haus/wikidata-rs)`). */
   userAgent?: string;

@@ -3,6 +3,10 @@
 
 export interface NativeOptions {
   filterJson?: string;
+  idArrays?: Uint32Array[];
+  languagesByJson?: string;
+  sitelinksByJson?: string;
+  classIndexOutput?: string;
   classIndex?: number;
   threads?: number;
   limit?: number;
@@ -45,6 +49,10 @@ export interface NativeEntityBatch {
   externalKeys: Uint8Array;
   externalSlots: Uint32Array;
   externalOffsets: Uint32Array;
+  /** With named filters only. */
+  names?: string[];
+  matchedBy?: Uint16Array;
+  matchedByOffsets?: Uint32Array;
 }
 
 export type NativeEvent =

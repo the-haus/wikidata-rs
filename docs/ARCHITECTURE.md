@@ -113,12 +113,27 @@ A filter is evaluated in two steps:
    options read at least as much, the probe and the output share one
    parse.
 
+**Named filters** (`{"any": {"venue": …}}`, `{"name": "venue", …}`) are
+nodes that pass their child's answer through. For an entity the whole
+filter matched, every named node is evaluated again, from its raw-bytes
+answer or, for a maybe, on the parse the match already made (or one probe
+parse), so `matchedBy` lists every named branch, not the first that
+decided `any`.
+
+**Missing ids.** Every `IdSet` of the filter is also checked against each
+line's id on the workers, before the filter runs, and the keys it holds
+are collected. After a complete pass (not stopped, not truncated) the
+requested ids that were never seen are reported as `missing_ids`.
+
 **The class index** is built in one pass that parses only the lines
 containing `"P279":[`, and only their P279 claims: the truthy subclass-of
 edges (what SPARQL's `wdt:P279*` follows) as CSR arrays (~12 bytes an
 edge), saved as a zstd-compressed file. `instanceOf` with subclasses
 expands its classes through the reversed edges (cycles are fine) into a
-set of item numbers, then checks P31.
+set of item numbers, then checks P31. Any other task builds the same index
+as a by-product (`ScanOptions::class_index`): the workers read the P279
+edges of every line before filtering it, and the index is saved, through a
+temporary file, when the pass ends without being stopped.
 
 ## Parsing (`wikidata-model`)
 

@@ -12,6 +12,8 @@
 //! Offsets into the strings are in UTF-16 code units (what JS strings
 //! index by), computed while appending.
 
+use std::sync::Arc;
+
 use napi::{Env, JsObject, JsTypedArray, Result, TypedArrayType};
 use wikidata_export::Record;
 use wikidata_model::{id_number, EntityType, EXTERNAL_IDS};
@@ -19,7 +21,7 @@ use wikidata_model::{id_number, EntityType, EXTERNAL_IDS};
 /// A typed array in V8's own memory (a copy), so its garbage collector
 /// counts it: external buffers made from Rust vectors are invisible to
 /// it, and batches it has not collected yet would pile up natively.
-fn typed<T: Copy>(env: &Env, v: &[T], kind: TypedArrayType) -> Result<JsTypedArray> {
+pub(crate) fn typed<T: Copy>(env: &Env, v: &[T], kind: TypedArrayType) -> Result<JsTypedArray> {
     let bytes = std::mem::size_of_val(v);
     let mut buf = env.create_arraybuffer(bytes)?;
     // SAFETY: plain numbers, `bytes` long.
@@ -72,6 +74,10 @@ pub(crate) struct EntityBatch {
     external_keys: Vec<u8>,
     external_slots: Vec<u32>,
     external_offsets: Vec<u32>,
+    /// Named filters that matched (indices into `names`), CSR by entity.
+    matched_by: Vec<u16>,
+    matched_by_offsets: Vec<u32>,
+    pub(crate) names: Arc<[String]>,
 }
 
 fn q_numbers(ids: &[String], out: &mut Vec<u32>, offsets: &mut Vec<u32>) {
@@ -165,6 +171,11 @@ impl EntityBatch {
             self.external_slots.push(slot);
         }
         self.external_offsets.push(self.external_keys.len() as u32);
+        if self.matched_by_offsets.is_empty() {
+            self.matched_by_offsets.push(0);
+        }
+        self.matched_by.extend_from_slice(&r.matched_by);
+        self.matched_by_offsets.push(self.matched_by.len() as u32);
         if self.json_offsets.is_empty() {
             self.json_offsets.push(0);
         }
@@ -215,6 +226,18 @@ impl EntityBatch {
             "externalOffsets",
             typed(env, &self.external_offsets, TypedArrayType::Uint32)?,
         )?;
+        if !self.names.is_empty() {
+            let mut names = env.create_array_with_length(self.names.len())?;
+            for (i, n) in self.names.iter().enumerate() {
+                names.set_element(i as u32, env.create_string(n)?)?;
+            }
+            o.set("names", names)?;
+            o.set("matchedBy", typed(env, &self.matched_by, TypedArrayType::Uint16)?)?;
+            o.set(
+                "matchedByOffsets",
+                typed(env, &self.matched_by_offsets, TypedArrayType::Uint32)?,
+            )?;
+        }
         Ok(o)
     }
 }

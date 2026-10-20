@@ -27,11 +27,17 @@ extract(&dump, &x, "nl.jsonl.zst", &mut |_| Flow::Continue)?;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-- `entities`: matching entities as `Record`s (the `Entity`, and its JSON
-  serialised on the workers), in dump order, with `limit` and progress.
+- `entities`: matching entities as `Record`s (the `Entity`, its JSON
+  serialised on the workers, and the named filters it matched), in dump
+  order, with `limit` and progress. `languages_by` / `sitelinks_by`
+  (`ByClaim`) choose each entity's languages and sitelinks by its claims
+  (`P17` → `nl` for a Dutch item, `de` for a German one).
 - `extract` / `raw_lines`: the matching original lines, to `.jsonl.zst`,
   `.json.bz2`, `.json.gz`, … (compressed on every core).
-- `build_class_index`: the P279 hierarchy in one pass.
+- `build_class_index`: the P279 hierarchy in one pass; or, with
+  `ScanOptions::class_index`, as a by-product of any other task.
+- With `ids` in the filter, a complete pass reports the requested ids the
+  dump does not hold (`ScanStats::missing_ids`).
 - `file_info`: entities by type, highest ids, the largest entity, sizes,
   bzip2 blocks and streams.
 - Every task stops when the sink returns `Flow::Stop`, and leaves no

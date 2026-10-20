@@ -5,13 +5,15 @@ set -euo pipefail
 PKG=$(cd "$(dirname "$0")/.." && pwd)
 F="$PKG/../../../fixtures/sample.json"
 W=$(mktemp -d)
+V=$(node -p "require('$PKG/package.json').version")
 cd "$PKG"
-rm -f wikidata-rs-node-0.1.0.tgz
+rm -f "wikidata-rs-node-$V.tgz"
 npm pack --ignore-scripts >/dev/null
-mv wikidata-rs-node-0.1.0.tgz "$W/"
+mv "wikidata-rs-node-$V.tgz" "$W/"
 cd "$W"
 npm init -y >/dev/null
-npm install ./wikidata-rs-node-0.1.0.tgz typescript@5 @types/node@22 >/dev/null 2>&1
+npm install "./wikidata-rs-node-$V.tgz" typescript@5 @types/node@22 >/dev/null 2>&1
+node -e 'require.resolve("@wikidata-rs/node/package.json")' 
 ls node_modules/@wikidata-rs/node
 cat > esm.mjs <<'JS'
 import { openDump, version } from "@wikidata-rs/node";

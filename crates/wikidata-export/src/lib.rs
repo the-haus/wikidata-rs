@@ -8,10 +8,10 @@ mod info;
 pub mod scan;
 
 pub use classes::build_class_index;
-pub use entities::{entities, EntityOptions, Record};
+pub use entities::{entities, ByClaim, EntityOptions, Record};
 pub use extract::{extract, raw_lines, ExtractOptions, ExtractStats, OutputFormat};
 pub use info::{file_info, FileInfo, LargestEntity};
-pub use scan::{Event, Flow, Progress, ScanOptions, ScanStats, TypeCounts};
+pub use scan::{Event, Flow, Progress, SavedClassIndex, ScanOptions, ScanStats, TypeCounts};
 
 pub use wikidata_dump::{Compression, Dump, DumpError, HttpOptions, Input, WriteOptions};
 pub use wikidata_filter::{ClassIndex, CompiledFilter, Filter, FilterError};

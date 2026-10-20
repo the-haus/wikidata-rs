@@ -131,6 +131,16 @@ class LazyRecord implements EntityRecord {
     return out;
   }
 
+  get matchedBy(): string[] {
+    const b = this.#batch.b;
+    const out: string[] = [];
+    if (!b.names || !b.matchedBy || !b.matchedByOffsets) return out;
+    for (let k = b.matchedByOffsets[this.#i]!; k < b.matchedByOffsets[this.#i + 1]!; k++) {
+      out.push(b.names[b.matchedBy[k]!]!);
+    }
+    return out;
+  }
+
   get json(): string {
     const b = this.#batch.b;
     return b.json.slice(b.jsonOffsets[this.#i]!, b.jsonOffsets[this.#i + 1]!);
@@ -162,6 +172,7 @@ class LazyRecord implements EntityRecord {
       image: this.image,
       website: this.website,
       externalIds: this.externalIds,
+      matchedBy: this.matchedBy,
     };
   }
 

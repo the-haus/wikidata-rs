@@ -34,6 +34,7 @@ import {
   type ExtractStats,
   type ExternalIdKey,
   type FileInfo,
+  type ItemNumbers,
   type OpenOptions,
   type Progress,
   type ScanStats,
@@ -44,20 +45,61 @@ export { EntityStream } from "./stream.js";
 
 const toPath = (p: string | URL): string => (p instanceof URL && p.protocol === "file:" ? fileURLToPath(p) : String(p));
 
+/** Item numbers as a `Uint32Array` (`Uint32Array` and `Int32Array` without a copy). */
+function itemNumbers(a: ItemNumbers): Uint32Array {
+  const bad = (n: unknown): never => {
+    throw new WikidataError(`ids: not an item number: ${String(n)}`);
+  };
+  if (a instanceof Uint32Array) return a;
+  if (a instanceof Int32Array) {
+    for (const n of a) if (n < 0) bad(n);
+    return new Uint32Array(a.buffer, a.byteOffset, a.length);
+  }
+  const out = new Uint32Array(a.length);
+  for (let i = 0; i < a.length; i++) {
+    const n = Number(a[i]);
+    if (!Number.isInteger(n) || n < 0 || n > 0xffffffff) bad(a[i]);
+    out[i] = n;
+  }
+  return out;
+}
+
+/** The filter as JSON, with the typed arrays of `ids` passed aside (`{"$items": k}`). */
+function filterOptions(filter: unknown, out: NativeOptions): void {
+  const arrays: Uint32Array[] = [];
+  out.filterJson = JSON.stringify(filter, (key, value: unknown) => {
+    if (!ArrayBuffer.isView(value) || value instanceof DataView) return value;
+    if (key !== "ids") throw new WikidataError(`${key}: a typed array is only accepted for ids`);
+    arrays.push(itemNumbers(value as ItemNumbers));
+    return { $items: arrays.length - 1 };
+  });
+  if (arrays.length > 0) out.idArrays = arrays;
+}
+
 function commonOptions(o: CommonOptions): NativeOptions {
   const out: NativeOptions = {};
-  if (o.filter !== undefined) out.filterJson = JSON.stringify(o.filter);
+  if (o.filter !== undefined) filterOptions(o.filter, out);
   if (o.classIndex !== undefined) out.classIndex = o.classIndex._id;
   if (o.threads !== undefined) out.threads = o.threads;
   if (o.limit !== undefined) out.limit = o.limit;
   if (o.allowTruncated !== undefined) out.allowTruncated = o.allowTruncated;
+  if (o.buildClassIndex !== undefined) out.classIndexOutput = toPath(o.buildClassIndex);
+  return out;
+}
+
+function openOptions(o: OpenOptions): { userAgent?: string; retries?: number } {
+  const out: { userAgent?: string; retries?: number } = {};
+  if (o.userAgent !== undefined) out.userAgent = o.userAgent;
+  if (o.retries !== undefined) out.retries = o.retries;
   return out;
 }
 
 function entityOptions(o: EntityOptions): NativeOptions {
   const out = commonOptions(o);
-  if (o.languages !== undefined) out.languages = [...o.languages];
-  if (o.sitelinks !== undefined) out.sitelinks = [...o.sitelinks];
+  if (Array.isArray(o.languages)) out.languages = [...o.languages];
+  else if (o.languages !== undefined) out.languagesByJson = JSON.stringify(o.languages);
+  if (Array.isArray(o.sitelinks)) out.sitelinks = [...o.sitelinks];
+  else if (o.sitelinks !== undefined) out.sitelinksByJson = JSON.stringify(o.sitelinks);
   if (o.properties !== undefined) out.properties = [...o.properties];
   if (o.labels !== undefined) out.labels = o.labels;
   if (o.descriptions !== undefined) out.descriptions = o.descriptions;
@@ -91,6 +133,11 @@ export class ClassIndex implements ClassIndexLike {
   /** @internal */
   constructor(n: NativeClassIndex) {
     this.#native = n;
+  }
+
+  /** Build the class index of a dump (a pass that parses only P279 claims). */
+  static async build(input: string | URL, options: ClassIndexOptions & OpenOptions = {}): Promise<ClassIndex> {
+    return (await openDump(input, options)).classIndex(options);
   }
 
   /** Load a file written by {@link ClassIndex.save} (or `wikidata classes -o`). */
@@ -172,9 +219,9 @@ export class DumpReader {
    * (`for await (const e of stream)`) or batch by batch (`stream.batches()`).
    */
   entities(options: EntityOptions = {}): EntityStream<EntityRecord> {
-    const opts = entityOptions(options);
+    // Options are converted when the stream starts, so that bad ones fail it.
     return new EntityStream<EntityRecord>(
-      (cb) => this.#native.entities(opts, cb),
+      (cb) => this.#native.entities(entityOptions(options), cb),
       decodeEntities as (b: never) => EntityRecord[],
       options.onProgress,
       options.signal,
@@ -187,10 +234,12 @@ export class DumpReader {
    * (recommended), `.json.bz2` (Wikimedia's own layout), `.json.gz`, …
    */
   extract(options: ExtractOptions): Promise<ExtractStats> {
-    const opts = commonOptions(options);
-    opts.output = toPath(options.output);
-    if (options.level !== undefined) opts.level = options.level;
-    return task<ExtractStats>((cb) => this.#native.extract(opts, cb), options);
+    return task<ExtractStats>((cb) => {
+      const opts = commonOptions(options);
+      opts.output = toPath(options.output);
+      if (options.level !== undefined) opts.level = options.level;
+      return this.#native.extract(opts, cb);
+    }, options);
   }
 
   /** Count what the dump holds (a full pass, or `limit` entities). */
@@ -212,20 +261,19 @@ export class DumpReader {
 /** Open a dump: a path, a `file:` URL, or an `http(s)://` URL (streamed, resumed on dropped connections). */
 export async function openDump(input: string | URL, options: OpenOptions = {}): Promise<DumpReader> {
   try {
-    const o: { userAgent?: string; retries?: number } = {};
-    if (options.userAgent !== undefined) o.userAgent = options.userAgent;
-    if (options.retries !== undefined) o.retries = options.retries;
-    return new DumpReader(await native.open(toPath(input), o));
+    return new DumpReader(await native.open(toPath(input), openOptions(options)));
   } catch (e) {
     throw new WikidataError(e instanceof Error ? e.message : String(e));
   }
 }
 
 /** {@link DumpReader.entities} on a path or URL, opening it when iteration starts. */
-export function streamEntities(input: string | URL, options: EntityOptions = {}): EntityStream<EntityRecord> {
-  const opts = entityOptions(options);
+export function streamEntities(
+  input: string | URL,
+  options: EntityOptions & OpenOptions = {},
+): EntityStream<EntityRecord> {
   return new EntityStream<EntityRecord>(
-    async (cb) => (await native.open(toPath(input))).entities(opts, cb),
+    async (cb) => (await native.open(toPath(input), openOptions(options))).entities(entityOptions(options), cb),
     decodeEntities as (b: never) => EntityRecord[],
     options.onProgress,
     options.signal,
@@ -233,13 +281,13 @@ export function streamEntities(input: string | URL, options: EntityOptions = {})
 }
 
 /** {@link DumpReader.extract} on a path or URL. */
-export async function extract(input: string | URL, options: ExtractOptions): Promise<ExtractStats> {
-  return (await openDump(input)).extract(options);
+export async function extract(input: string | URL, options: ExtractOptions & OpenOptions): Promise<ExtractStats> {
+  return (await openDump(input, options)).extract(options);
 }
 
 /** {@link DumpReader.fileInfo} on a path or URL. */
-export async function fileInfo(input: string | URL, options: CommonOptions = {}): Promise<FileInfo> {
-  return (await openDump(input)).fileInfo(options);
+export async function fileInfo(input: string | URL, options: CommonOptions & OpenOptions = {}): Promise<FileInfo> {
+  return (await openDump(input, options)).fileInfo(options);
 }
 
 /** The identifiers collected into `externalIds`: key, Wikidata property and URL formatter (`$1`: the value). */

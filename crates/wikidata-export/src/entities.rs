@@ -1,10 +1,11 @@
 //! Matching entities, parsed and normalised on the workers.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use wikidata_dump::Dump;
 use wikidata_filter::Pre;
-use wikidata_model::{parse_entity, Compiled, Entity, Map, ModelOptions};
+use wikidata_model::{parse_entity, truthy, Compiled, Entity, Map, ModelOptions, Pid, Text};
 
 use crate::scan::{scan, ChunkCounts, Event, Flow, ScanOptions, ScanStats, Work};
 use crate::ExportError;
@@ -21,6 +22,91 @@ pub struct EntityOptions {
     /// Keep only the id, type, label, description and derived fields in
     /// [`Record::entity`] (when the JSON carries the rest).
     pub summary_only: bool,
+    /// Choose each entity's languages by its claims (replaces
+    /// `model.languages`).
+    pub languages_by: Option<ByClaim>,
+    /// Choose each entity's sitelinks by its claims (replaces
+    /// `model.sitelinks`).
+    pub sitelinks_by: Option<ByClaim>,
+}
+
+/// Languages (or sites) chosen per entity by the values of its claims:
+/// with `properties` `[P17]` and `map` `{Q55: [nl], Q183: [de]}`, a Dutch
+/// item keeps `nl`, a German one `de`, and every entity `always` (`en`,
+/// `mul`) after them. The values are read from the truthy statements;
+/// for languages, the order is the fallback chain of `label` and
+/// `description`.
+#[derive(Clone, Debug, Default)]
+pub struct ByClaim {
+    /// The properties whose values choose (`P17`).
+    pub properties: Vec<Pid>,
+    /// Item id → languages or sites.
+    pub map: HashMap<String, Vec<String>>,
+    /// Kept for every entity, after the chosen ones.
+    pub always: Vec<String>,
+}
+
+impl ByClaim {
+    /// Every language or site the rule can keep (what a parse must keep).
+    fn union(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        let mut keys: Vec<&String> = self.map.keys().collect();
+        keys.sort();
+        for l in keys.into_iter().flat_map(|k| &self.map[k]).chain(&self.always) {
+            if !out.contains(l) {
+                out.push(l.clone());
+            }
+        }
+        out
+    }
+
+    /// The languages or sites of `e`, in order.
+    fn select(&self, e: &Entity) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        let chosen = self
+            .properties
+            .iter()
+            .flat_map(|&p| truthy(e.statements(p)))
+            .filter_map(|s| s.value.entity_id())
+            .filter_map(|id| self.map.get(id))
+            .flatten();
+        for l in chosen.chain(&self.always) {
+            if !out.contains(l) {
+                out.push(l.clone());
+            }
+        }
+        out
+    }
+}
+
+/// Keep `chain`'s languages of `terms`, in `chain` order.
+fn keep<V>(terms: &mut Map<String, V>, chain: &[String]) {
+    terms.0.retain(|(l, _)| chain.contains(l));
+    terms.0.sort_by_key(|(l, _)| chain.iter().position(|c| c == l));
+}
+
+/// The first language of `chain` present in `terms`.
+fn pick(terms: &Map<String, String>, chain: &[String]) -> Option<Text> {
+    chain.iter().find_map(|l| {
+        terms.get(l.as_str()).map(|t| Text {
+            text: t.clone(),
+            language: l.clone(),
+        })
+    })
+}
+
+/// Apply a languages rule to a parsed entity.
+fn keep_languages(e: &mut Entity, chain: &[String]) {
+    keep(&mut e.labels, chain);
+    keep(&mut e.descriptions, chain);
+    keep(&mut e.aliases, chain);
+    if let Some(l) = &mut e.lexeme {
+        for s in &mut l.senses {
+            keep(&mut s.glosses, chain);
+        }
+    }
+    e.label = pick(&e.labels, chain);
+    e.description = pick(&e.descriptions, chain);
 }
 
 /// A matching entity.
@@ -30,6 +116,9 @@ pub struct Record {
     pub entity: Entity,
     /// Its JSON (with `json`), one line without the newline.
     pub json: Vec<u8>,
+    /// The named filters that match it, as indices into the filter's
+    /// [`names`](wikidata_filter::CompiledFilter::names).
+    pub matched_by: Vec<u16>,
 }
 
 /// Whether parsing with `full` reads everything the filter looks at, so
@@ -61,7 +150,29 @@ pub fn entities(
     opts: &EntityOptions,
     sink: &mut dyn FnMut(Event<Record>) -> Flow,
 ) -> Result<ScanStats, ExportError> {
-    let full = Arc::new(Compiled::new(opts.model.clone()));
+    let mut model = opts.model.clone();
+    // Properties a rule reads but `properties` leaves out: parsed, read,
+    // then dropped.
+    let mut extra: Vec<Pid> = Vec::new();
+    for rule in [&opts.languages_by, &opts.sitelinks_by].into_iter().flatten() {
+        if let Some(ps) = &mut model.properties {
+            for p in &rule.properties {
+                if !ps.contains(p) {
+                    ps.push(*p);
+                    extra.push(*p);
+                }
+            }
+        }
+    }
+    if let Some(r) = &opts.languages_by {
+        model.languages = Some(r.union());
+    }
+    if let Some(r) = &opts.sitelinks_by {
+        model.sitelinks = Some(r.union());
+    }
+    let languages_by = opts.languages_by.clone();
+    let sitelinks_by = opts.sitelinks_by.clone();
+    let full = Arc::new(Compiled::new(model));
     let filter = opts.scan.filter.clone();
     let single = filter
         .as_ref()
@@ -70,6 +181,8 @@ pub fn entities(
     let summary = opts.summary_only;
     let work: Arc<Work<Record>> = Arc::new(move |line: &[u8], p, c: &mut ChunkCounts| {
         let mut probed = false;
+        // The probe parse, kept for the named filters.
+        let mut probe = None;
         if let Some(f) = &filter {
             match f.pre(line, Some(p)) {
                 Pre::No => return Ok(None),
@@ -77,10 +190,12 @@ pub fn entities(
                 Pre::Maybe if single => {}
                 Pre::Maybe => {
                     c.parsed += 1;
-                    if !f.matches_line(line, Some(p)).map_err(|e| e.to_string())? {
+                    let (ok, e) = f.check_line(line, Some(p)).map_err(|e| e.to_string())?;
+                    if !ok {
                         return Ok(None);
                     }
                     probed = true;
+                    probe = e;
                 }
             }
         }
@@ -90,6 +205,25 @@ pub fn entities(
             if single && !f.matches_entity(&e) {
                 return Ok(None);
             }
+        }
+        let matched_by = match &filter {
+            // With `single`, the full parse has what the filter reads;
+            // else the probe parse does, if there was one.
+            Some(f) if !f.names().is_empty() => f
+                .matched_names(line, Some(p), if single { Some(&e) } else { probe.as_ref() })
+                .map_err(|e| e.to_string())?,
+            _ => Vec::new(),
+        };
+        if let Some(r) = &languages_by {
+            let chain = r.select(&e);
+            keep_languages(&mut e, &chain);
+        }
+        if let Some(r) = &sitelinks_by {
+            let sites = r.select(&e);
+            e.sitelinks.0.retain(|(s, _)| sites.contains(s));
+        }
+        if !extra.is_empty() {
+            e.claims.0.retain(|(p, _)| !extra.contains(p));
         }
         let mut out = Vec::new();
         if json {
@@ -104,11 +238,13 @@ pub fn entities(
             e.claims = Map::default();
             e.lexeme = None;
         }
-        Ok(Some(Record { entity: e, json: out }))
+        Ok(Some(Record {
+            entity: e,
+            json: out,
+            matched_by,
+        }))
     });
-    let mut scan_opts = opts.scan.clone();
     // The filter runs inside the work, sharing the parse when it can.
-    scan_opts.filter = None;
-    let r = scan(dump, &scan_opts, work, false, sink)?;
+    let r = scan(dump, &opts.scan, false, work, false, sink)?;
     Ok(r.stats)
 }

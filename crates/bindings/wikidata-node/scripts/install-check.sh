@@ -34,3 +34,4 @@ const { streamEntities } = require("@wikidata-rs/node");
 JS
 node esm.mjs
 node cjs.cjs
+node -e 'require.resolve("@wikidata-rs/node/package.json"); console.log("package.json: exported")'

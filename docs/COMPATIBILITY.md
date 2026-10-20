@@ -102,6 +102,12 @@ listed languages only, in that order, and is also the fallback chain for
 `label` and `description` (the first language that has one). Without
 `languages`, every language is kept and the chain is `en`, `mul`.
 
+A `languages` rule (`{ by: "P17", map: { Q55: ["nl"] }, always: ["en", "mul"] }`)
+chooses the languages per entity: the mapped languages of the values of
+its truthy `by` statements, in statement order, then `always`; that list
+is both what is kept and the fallback chain. A `sitelinks` rule chooses
+sites the same way.
+
 ## Derived fields
 
 From the truthy statements (preferred if any, else normal) of:
@@ -125,3 +131,6 @@ statements kept by default: all but the deprecated ones. `instanceOf`
 with `subclasses` follows the truthy P279 edges, like SPARQL's
 `wdt:P31/wdt:P279*`. Claim values match entity ids, or the exact string
 of a string-like value (string, external id, URL, file name, text).
+`missingIds` lists the ids of `ids` filters that no line of the dump
+has: an item merged into another is a redirect, which the JSON dumps do not
+contain, so it is reported as missing too.

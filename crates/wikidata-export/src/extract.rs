@@ -83,7 +83,7 @@ pub fn raw_lines(
     sink: &mut dyn FnMut(Event<Vec<u8>>) -> Flow,
 ) -> Result<ScanStats, ExportError> {
     let work: Arc<Work<Vec<u8>>> = Arc::new(|line: &[u8], _, _| Ok(Some(line.to_vec())));
-    Ok(scan(dump, opts, work, false, sink)?.stats)
+    Ok(scan(dump, opts, true, work, false, sink)?.stats)
 }
 
 /// Write the entities matching `opts.scan.filter` to `output`.

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -74,5 +74,25 @@ describe("examples", () => {
     const features = run("places.mjs", [sample]).stdout.trim().split("\n").map((l) => JSON.parse(l));
     expect(features.map((f) => f.id)).toEqual(["Q55", "Q1072"]);
     expect(features[1].geometry.coordinates).toEqual([6.03, 50.9]);
+  });
+  it("weekly-refresh", () => {
+    const index = join(work, "weekly-classes.wdc");
+    const known = join(work, "known.txt");
+    writeFileSync(known, "Q55\nQ999999999\n");
+    const records = (out: string) =>
+      new Map(out.trim().split("\n").map((l) => {
+        const r = JSON.parse(l) as { id: string; language: string | null; as: string[] };
+        return [r.id, r] as const;
+      }));
+    // First run: no index yet, so it is built during the pass.
+    const first = run("weekly-refresh.mjs", [sample, index, known]);
+    expect(JSON.parse(first.stderr)).toEqual({ matched: 9, missing: ["Q999999999"], classIndex: `built ${index}` });
+    expect(records(first.stdout).get("Q1072")!.as).toEqual(["artist"]);
+    expect(records(first.stdout).get("Q55")).toEqual({ id: "Q55", label: "Nederland", language: "nl", as: ["known"] });
+    // Second run: subclasses of music festival through the saved index.
+    const second = run("weekly-refresh.mjs", [sample, index, known]);
+    expect(JSON.parse(second.stderr).classIndex).toBe("loaded");
+    expect(records(second.stdout).get("Q1072")!.as).toEqual(["artist", "festival"]);
+    expect(records(second.stdout).get("Q42")!.language).toBe("en");
   });
 });

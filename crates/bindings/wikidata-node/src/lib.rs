@@ -78,7 +78,15 @@ impl NativeReader {
             model: options::model(&options)?,
             json: options.json.unwrap_or(true),
             summary_only: true,
+            languages_by: options::by_claim(&options.languages_by_json, "languages")?,
+            sitelinks_by: options::by_claim(&options.sitelinks_by_json, "sitelinks")?,
         };
+        let names = opts
+            .scan
+            .filter
+            .as_ref()
+            .map(|f| f.names().to_vec())
+            .unwrap_or_default();
         let batch_size = options.batch_size.unwrap_or(1024) as usize;
         if batch_size == 0 {
             return Err(invalid("batchSize must be a positive integer"));
@@ -89,7 +97,7 @@ impl NativeReader {
         }
         let cb = stream::callback(&callback)?;
         let dump = self.dump.clone();
-        Ok(stream::spawn_entities(cb, batch_size, read_ahead, move |sink| {
+        Ok(stream::spawn_entities(cb, batch_size, read_ahead, names, move |sink| {
             let stats = wikidata_export::entities(&dump, &opts, sink).map_err(|e| e.to_string())?;
             to_value(&stats)
         }))

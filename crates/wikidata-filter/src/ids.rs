@@ -96,6 +96,17 @@ impl Container {
         }
     }
 
+    fn iter(&self) -> Box<dyn Iterator<Item = u16> + '_> {
+        match self {
+            Container::Array(a) => Box::new(a.iter().copied()),
+            Container::Bitmap(b) => Box::new(b.iter().enumerate().flat_map(|(w, &bits)| {
+                (0..64u16)
+                    .filter(move |i| bits & (1 << i) != 0)
+                    .map(move |i| (w as u16) << 6 | i)
+            })),
+        }
+    }
+
     fn len(&self) -> usize {
         match self {
             Container::Array(a) => a.len(),
@@ -251,6 +262,17 @@ impl IdSet {
         false
     }
 
+    /// The ids, in ascending order.
+    pub fn iter(&self) -> impl Iterator<Item = i64> + '_ {
+        let (negative, large): (Vec<i64>, Vec<i64>) = self.others.iter().partition(|&&o| o < 0);
+        let dense = self.table.iter().enumerate().flat_map(|(c, container)| {
+            container
+                .iter()
+                .flat_map(move |container| container.iter().map(move |o| ((c as i64) << CHUNK_BITS) | o as i64))
+        });
+        negative.into_iter().chain(dense).chain(large)
+    }
+
     /// Number of ids.
     pub fn len(&self) -> usize {
         self.table.iter().flatten().map(Container::len).sum::<usize>() + self.others.len()
@@ -357,6 +379,18 @@ mod tests {
         let s = b.freeze();
         assert_eq!(s.len(), 80_000);
     }
+
+    #[test]
+    fn iterates_in_order() {
+        let b = IdSetBuilder::new();
+        let mut ids: Vec<i64> = (0..65_536).step_by(3).chain([70_000, 14_274_176_831, -9, 5]).collect();
+        b.insert_all(&ids);
+        let s = b.freeze();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(s.iter().collect::<Vec<_>>(), ids);
+        assert_eq!(IdSet::new().iter().count(), 0);
+    }
 }
 
 /// The key of an entity id in an [`IdSet`]: its number, offset by kind
@@ -368,6 +402,12 @@ pub fn id_key(id: &str) -> Option<i64> {
         return None;
     }
     Some(((kind.code() as i64) << 34) | n as i64)
+}
+
+/// The entity id of an [`id_key`] (`31` is `Q31`).
+pub fn id_from_key(key: i64) -> Option<String> {
+    let kind = wikidata_model::EntityType::from_code(u8::try_from(key >> 34).ok()?)?;
+    Some(format!("{}{}", kind.letter() as char, key & ((1 << 34) - 1)))
 }
 
 #[cfg(test)]
@@ -388,6 +428,9 @@ mod key_tests {
         assert!(s.contains(id_key("Q137000000").unwrap()));
         assert!(s.contains(id_key("E10").unwrap()));
         assert!(!s.contains(id_key("Q31").unwrap()));
+        let ids: Vec<String> = s.iter().filter_map(id_from_key).collect();
+        assert_eq!(ids, ["Q1", "Q137000000", "P31", "L7", "E10"]);
+        assert_eq!(id_from_key(-1), None);
     }
 }
 

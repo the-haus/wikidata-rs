@@ -6,11 +6,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use napi::threadsafe_function::{ErrorStrategy, ThreadSafeCallContext, ThreadsafeFunction, ThreadsafeFunctionCallMode};
-use napi::{Env, JsFunction, JsObject, JsUnknown, Result};
+use napi::{Env, JsFunction, JsObject, JsUnknown, Result, TypedArrayType};
 use napi_derive::napi;
 use wikidata_export::{Event, Flow, Progress, Record};
 
-use crate::batch::EntityBatch;
+use crate::batch::{typed, EntityBatch};
 use crate::credits::Credits;
 
 /// What the producer sends to JS.
@@ -38,9 +38,25 @@ impl StreamEvent {
                 o.set("matched", p.matched as f64)?;
                 o.set("elapsedMs", p.elapsed_ms as f64)?;
             }
-            StreamEvent::End(stats) => {
+            StreamEvent::End(mut stats) => {
                 o.set("type", "end")?;
-                o.set("stats", env.to_js_value(&as_doubles(stats))?)?;
+                let missing = stats.as_object_mut().and_then(|s| s.remove("missingIds"));
+                let mut js = env.to_js_value(&as_doubles(stats))?.coerce_to_object()?;
+                if let Some(serde_json::Value::Array(ids)) = missing {
+                    // Missing items cross as numbers (there can be a
+                    // million); JS makes the `missingIds` strings on demand.
+                    let mut items = Vec::new();
+                    let mut others = Vec::new();
+                    for id in ids.iter().filter_map(|v| v.as_str()) {
+                        match id.strip_prefix('Q').and_then(|n| n.parse::<u32>().ok()) {
+                            Some(n) => items.push(n),
+                            None => others.push(id.to_string()),
+                        }
+                    }
+                    js.set("missingItemNumbers", typed(env, &items, TypedArrayType::Uint32)?)?;
+                    js.set("missingOtherIds", others)?;
+                }
+                o.set("stats", js)?;
             }
             StreamEvent::Error(message) => {
                 o.set("type", "error")?;
@@ -140,6 +156,8 @@ struct Sender {
     batch: EntityBatch,
     batch_size: usize,
     progress: Throttle,
+    /// The filter's names, sent with each batch.
+    names: Arc<[String]>,
 }
 
 impl Sender {
@@ -150,7 +168,8 @@ impl Sender {
         if !self.credits.acquire() {
             return Flow::Stop;
         }
-        let b = std::mem::take(&mut self.batch);
+        let mut b = std::mem::take(&mut self.batch);
+        b.names = self.names.clone();
         self.cb
             .call(StreamEvent::Batch(Box::new(b)), ThreadsafeFunctionCallMode::Blocking);
         Flow::Continue
@@ -217,7 +236,13 @@ fn handle(credits: Arc<Credits>, cb: &Callback) -> NativeStream {
 }
 
 /// Run `job` on its own thread, streaming entity batches to `cb`.
-pub(crate) fn spawn_entities<F>(cb: Callback, batch_size: usize, read_ahead: u32, job: F) -> NativeStream
+pub(crate) fn spawn_entities<F>(
+    cb: Callback,
+    batch_size: usize,
+    read_ahead: u32,
+    names: Vec<String>,
+    job: F,
+) -> NativeStream
 where
     F: FnOnce(&mut dyn FnMut(Event<Record>) -> Flow) -> std::result::Result<serde_json::Value, String> + Send + 'static,
 {
@@ -233,12 +258,18 @@ where
                 batch: EntityBatch::default(),
                 batch_size: batch_size.max(1),
                 progress: Throttle::default(),
+                names: names.into(),
             };
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&mut |e| sender.on_event(e))))
                 .unwrap_or_else(|p| Err(format!("internal error: {}", panic_message(&p))));
             let result = result.map(|mut stats| {
                 if sender.flush() == Flow::Stop {
+                    // Closed before the last batch: the pass was cut short
+                    // for the consumer, so it reports no missing ids.
                     stats["stopped"] = true.into();
+                    if let Some(o) = stats.as_object_mut() {
+                        o.remove("missingIds");
+                    }
                 }
                 stats
             });

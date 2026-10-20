@@ -1,10 +1,14 @@
 //! JS options → task options.
 
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use napi::bindgen_prelude::Uint32Array;
 use napi::{Error, Result, Status};
 use napi_derive::napi;
-use wikidata_export::{CompiledFilter, Filter, ModelOptions, ScanOptions};
+use serde::Deserialize;
+use wikidata_export::{ByClaim, CompiledFilter, Filter, ModelOptions, ScanOptions};
 use wikidata_model::Pid;
 
 use crate::class_index::lookup;
@@ -13,8 +17,10 @@ use crate::class_index::lookup;
 #[napi(object)]
 #[derive(Default)]
 pub struct NativeOptions {
-    /// A filter, as JSON.
+    /// A filter, as JSON; `"ids": {"$items": k}` stands for `idArrays[k]`.
     pub filter_json: Option<String>,
+    /// Item numbers of `ids` filters given as typed arrays.
+    pub id_arrays: Option<Vec<Uint32Array>>,
     /// A class index (its registry id) for `instanceOf` with subclasses.
     pub class_index: Option<u32>,
     /// Worker threads (default: all cores).
@@ -29,8 +35,14 @@ pub struct NativeOptions {
     pub read_ahead: Option<u32>,
     /// Languages, in fallback order (default: all).
     pub languages: Option<Vec<String>>,
+    /// Languages chosen by claims, as JSON (`{by, map, always}`).
+    pub languages_by_json: Option<String>,
     /// Sites to keep sitelinks for (default: all).
     pub sitelinks: Option<Vec<String>>,
+    /// Sites chosen by claims, as JSON.
+    pub sitelinks_by_json: Option<String>,
+    /// Build the class index during the task and save it here.
+    pub class_index_output: Option<String>,
     /// Properties to keep claims for (default: all).
     pub properties: Option<Vec<String>>,
     /// Keep labels (default true).
@@ -61,7 +73,8 @@ pub(crate) fn invalid(msg: impl Into<String>) -> Error {
 
 pub(crate) fn filter(o: &NativeOptions) -> Result<Option<Arc<CompiledFilter>>> {
     let Some(json) = &o.filter_json else { return Ok(None) };
-    let f = Filter::parse_json(json).map_err(|e| invalid(e.to_string()))?;
+    let items: Vec<&[u32]> = o.id_arrays.iter().flatten().map(|a| &a[..]).collect();
+    let f = Filter::parse_json_with(json, &items).map_err(|e| invalid(e.to_string()))?;
     let index = match o.class_index {
         Some(id) => Some(lookup(id).ok_or_else(|| invalid("the class index was released"))?),
         None => None,
@@ -81,7 +94,44 @@ pub(crate) fn scan(o: &NativeOptions) -> Result<ScanOptions> {
         threads: o.threads.unwrap_or(0) as usize,
         limit,
         allow_truncated: o.allow_truncated.unwrap_or(false),
+        class_index: o.class_index_output.as_ref().map(PathBuf::from),
     })
+}
+
+/// `{by: "P17" | ["P17", …], map: {Q55: ["nl"]}, always?: ["en"]}`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ByClaimJson {
+    by: OneOrMany,
+    map: HashMap<String, Vec<String>>,
+    #[serde(default)]
+    always: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum OneOrMany {
+    One(String),
+    Many(Vec<String>),
+}
+
+pub(crate) fn by_claim(json: &Option<String>, what: &str) -> Result<Option<ByClaim>> {
+    let Some(json) = json else { return Ok(None) };
+    let r: ByClaimJson =
+        serde_json::from_str(json).map_err(|e| invalid(format!("{what}: expected {{ by, map, always }}: {e}")))?;
+    let by = match r.by {
+        OneOrMany::One(p) => vec![p],
+        OneOrMany::Many(ps) => ps,
+    };
+    let properties = by
+        .iter()
+        .map(|p| Pid::parse(p).ok_or_else(|| invalid(format!("{what}.by: not a property id: {p:?}"))))
+        .collect::<Result<_>>()?;
+    Ok(Some(ByClaim {
+        properties,
+        map: r.map,
+        always: r.always,
+    }))
 }
 
 pub(crate) fn model(o: &NativeOptions) -> Result<ModelOptions> {

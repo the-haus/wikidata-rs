@@ -139,7 +139,7 @@ export class EntityStream<T, S = ScanStats, P = Progress> implements AsyncIterab
       case "end":
         this.#ended = true;
         this.#release();
-        this.#resolveStats(event.stats as unknown as S);
+        this.#resolveStats(withMissingIds(event.stats) as unknown as S);
         this.#wake();
         return;
       case "error":
@@ -312,6 +312,25 @@ export class EntityStream<T, S = ScanStats, P = Progress> implements AsyncIterab
   toReadable(): Readable {
     return Readable.from(this, { objectMode: true });
   }
+}
+
+/**
+ * `missingIds` from the numbers the native side sends (`missingItemNumbers`
+ * and the few other ids), made into strings only when read.
+ */
+function withMissingIds(stats: unknown): unknown {
+  const s = stats as { missingItemNumbers?: Uint32Array; missingOtherIds?: string[] };
+  const numbers = s.missingItemNumbers;
+  if (!(numbers instanceof Uint32Array)) return stats;
+  const others = s.missingOtherIds ?? [];
+  delete s.missingOtherIds;
+  let ids: string[] | undefined;
+  Object.defineProperty(s, "missingIds", {
+    enumerable: true,
+    configurable: true,
+    get: () => (ids ??= [...Array.from(numbers, (n) => `Q${n}`), ...others]),
+  });
+  return s;
 }
 
 /** Progress with rates. */

@@ -8,3 +8,4 @@ npm/
 artifacts/
 *.tgz
 CHANGELOG.md
+.bundle-*/

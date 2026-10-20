@@ -14,14 +14,16 @@
 //! Claim filters look at the statements that are output by default: all
 //! but the deprecated ones.
 
+use std::sync::Arc;
+
 use aho_corasick::AhoCorasick;
 use memchr::memmem::Finder;
 use rustc_hash::FxHashSet;
-use serde_json::Value as Json;
 use wikidata_model::{parse_entity, Compiled, Entity, EntityType, ModelOptions, Peek, Pid, Rank};
 
 use crate::classes::ClassIndex;
 use crate::ids::{id_key, IdSet, IdSetBuilder};
+use crate::json::Json;
 use crate::FilterError;
 
 /// A filter (see the crate docs for the JSON form).
@@ -57,6 +59,16 @@ pub enum Filter {
     },
     /// Has a sitelink to one of these sites (`nlwiki`).
     Sitelink(Vec<String>),
+    /// One of these items, by number (`42` is `Q42`).
+    ItemNumbers(Vec<u32>),
+    /// A filter with a name, reported in [`CompiledFilter::matched_names`]
+    /// when it matches an entity the whole filter matches.
+    Named {
+        /// The name.
+        name: String,
+        /// The filter.
+        filter: Box<Filter>,
+    },
 }
 
 fn strings(v: &Json, what: &str) -> Result<Vec<String>, FilterError> {
@@ -103,33 +115,78 @@ impl Filter {
         }
     }
 
-    /// Parse the JSON form (see the crate docs).
-    pub fn from_json(v: &Json) -> Result<Filter, FilterError> {
+    /// Parse the JSON form (see the crate docs). A `serde_json::Value`
+    /// has its object keys sorted (without serde_json's `preserve_order`),
+    /// and so are named filters; [`Filter::parse_json`] keeps the order of
+    /// the text.
+    pub fn from_json(v: &serde_json::Value) -> Result<Filter, FilterError> {
+        Filter::from_ordered(&Json::from(v), &[])
+    }
+
+    /// [`Filter::from_json`], where `"ids": {"$items": k}` stands for the
+    /// item numbers `items[k]` (for callers that hold ids as numbers and
+    /// would rather not write a million of them out as JSON).
+    pub fn from_json_with(v: &serde_json::Value, items: &[&[u32]]) -> Result<Filter, FilterError> {
+        Filter::from_ordered(&Json::from(v), items)
+    }
+
+    /// Parse JSON text, with `"ids": {"$items": k}` as in
+    /// [`Filter::from_json_with`]; objects are read in their order.
+    pub fn parse_json_with(text: &str, items: &[&[u32]]) -> Result<Filter, FilterError> {
+        let v: Json = serde_json::from_str(text).map_err(|e| FilterError::Invalid(format!("filter JSON: {e}")))?;
+        Filter::from_ordered(&v, items)
+    }
+
+    fn from_ordered(v: &Json, items: &[&[u32]]) -> Result<Filter, FilterError> {
+        let parse = |v: &Json| Filter::from_ordered(v, items);
+        // `[f, g]` or `{"venue": f, "festival": g}` (named filters).
+        let list = |v: &Json, what: &str| -> Result<Vec<Filter>, FilterError> {
+            match v {
+                Json::Array(a) => a.iter().map(parse).collect(),
+                Json::Object(o) => o
+                    .iter()
+                    .map(|(name, f)| {
+                        Ok(Filter::Named {
+                            name: name.clone(),
+                            filter: Box::new(parse(f)?),
+                        })
+                    })
+                    .collect(),
+                _ => Err(FilterError::Invalid(format!(
+                    "{what}: expected an array or an object of named filters"
+                ))),
+            }
+        };
         if let Json::Array(a) = v {
-            return Ok(Filter::all(a.iter().map(Filter::from_json).collect::<Result<_, _>>()?));
+            return Ok(Filter::all(a.iter().map(parse).collect::<Result<_, _>>()?));
         }
         let o = v
             .as_object()
             .ok_or_else(|| FilterError::Invalid("a filter is a JSON object".into()))?;
         let mut parts = Vec::new();
+        let mut name = None;
         for (k, v) in o {
             parts.push(match k.as_str() {
-                "all" | "and" => Filter::All(
-                    v.as_array()
-                        .ok_or_else(|| FilterError::Invalid("all: expected an array".into()))?
-                        .iter()
-                        .map(Filter::from_json)
-                        .collect::<Result<_, _>>()?,
-                ),
-                "any" | "or" => Filter::Any(
-                    v.as_array()
-                        .ok_or_else(|| FilterError::Invalid("any: expected an array".into()))?
-                        .iter()
-                        .map(Filter::from_json)
-                        .collect::<Result<_, _>>()?,
-                ),
-                "not" => Filter::Not(Box::new(Filter::from_json(v)?)),
-                "ids" => Filter::Ids(strings(v, "ids")?),
+                "name" => {
+                    name = Some(
+                        v.as_str()
+                            .ok_or_else(|| FilterError::Invalid("name: expected a string".into()))?
+                            .to_string(),
+                    );
+                    continue;
+                }
+                "all" | "and" => Filter::All(list(v, "all")?),
+                "any" | "or" => Filter::Any(list(v, "any")?),
+                "not" => Filter::Not(Box::new(parse(v)?)),
+                "ids" => match v.get("$items").and_then(Json::as_u64) {
+                    Some(k) => Filter::ItemNumbers(
+                        items
+                            .get(k as usize)
+                            .ok_or_else(|| FilterError::Invalid(format!("ids: no item numbers #{k}")))?
+                            .to_vec(),
+                    ),
+                    None => Filter::Ids(strings(v, "ids")?),
+                },
                 "type" | "types" => Filter::Types(
                     strings(v, "type")?
                         .iter()
@@ -189,13 +246,19 @@ impl Filter {
         if parts.is_empty() {
             return Err(FilterError::Invalid("an empty filter".into()));
         }
-        Ok(Filter::all(parts))
+        let f = Filter::all(parts);
+        Ok(match name {
+            Some(name) => Filter::Named {
+                name,
+                filter: Box::new(f),
+            },
+            None => f,
+        })
     }
 
-    /// Parse JSON text.
+    /// Parse JSON text (objects are read in their order).
     pub fn parse_json(text: &str) -> Result<Filter, FilterError> {
-        let v: Json = serde_json::from_str(text).map_err(|e| FilterError::Invalid(format!("filter JSON: {e}")))?;
-        Filter::from_json(&v)
+        Filter::parse_json_with(text, &[])
     }
 
     /// Parse `P17=Q55,Q31` (or `P17` for any value).
@@ -215,7 +278,7 @@ impl Filter {
     pub fn needs_class_index(&self) -> bool {
         match self {
             Filter::All(f) | Filter::Any(f) => f.iter().any(Filter::needs_class_index),
-            Filter::Not(f) => f.needs_class_index(),
+            Filter::Not(f) | Filter::Named { filter: f, .. } => f.needs_class_index(),
             Filter::InstanceOf { subclasses, .. } => *subclasses,
             _ => false,
         }
@@ -241,7 +304,16 @@ impl Filter {
                 derived: false,
             })
         });
-        Ok(CompiledFilter { root, probe })
+        let mut named = Vec::new();
+        let mut id_sets = Vec::new();
+        walk(&root, &mut named, &mut id_sets);
+        Ok(CompiledFilter {
+            root,
+            probe,
+            names: needs.names,
+            named,
+            id_sets,
+        })
     }
 }
 
@@ -249,6 +321,7 @@ impl Filter {
 struct Needs {
     properties: FxHashSet<u32>,
     sites: FxHashSet<String>,
+    names: Vec<String>,
 }
 
 /// Byte strings, one of which must occur. The single-needle `Finder` is
@@ -296,7 +369,7 @@ enum Node {
     All(Vec<Node>),
     Any(Vec<Node>),
     Not(Box<Node>),
-    Ids(IdSet),
+    Ids(Arc<IdSet>),
     Types(u8),
     HasProperty {
         properties: Vec<Pid>,
@@ -317,6 +390,9 @@ enum Node {
         sites: Vec<String>,
         needles: Option<Needles>,
     },
+    /// The index of its name in [`CompiledFilter::names`] (shared with
+    /// [`CompiledFilter::named`]).
+    Named(u16, Arc<Node>),
 }
 
 /// The needle for a claim on `p`: its key in a map of statements or snaks.
@@ -365,7 +441,26 @@ fn compile(f: &Filter, classes: Option<&ClassIndex>, needs: &mut Needs) -> Resul
             for id in ids {
                 b.insert(id_key(id).ok_or_else(|| FilterError::Invalid(format!("not an entity id: {id:?}")))?);
             }
-            Node::Ids(b.freeze())
+            Node::Ids(Arc::new(b.freeze()))
+        }
+        Filter::ItemNumbers(ns) => {
+            // Item keys are their numbers (see `id_key`).
+            let b = IdSetBuilder::new();
+            let mut keys: Vec<i64> = ns.iter().map(|&n| n as i64).collect();
+            keys.sort_unstable();
+            b.insert_all(&keys);
+            Node::Ids(Arc::new(b.freeze()))
+        }
+        Filter::Named { name, filter } => {
+            let i = match needs.names.iter().position(|n| n == name) {
+                Some(i) => i,
+                None => {
+                    needs.names.push(name.clone());
+                    needs.names.len() - 1
+                }
+            };
+            let i = u16::try_from(i).map_err(|_| FilterError::Invalid("too many named filters".into()))?;
+            Node::Named(i, Arc::new(compile(filter, classes, needs)?))
         }
         Filter::Types(ts) => Node::Types(ts.iter().fold(0, |m, t| m | 1 << t.code())),
         Filter::HasProperty(ps) => {
@@ -482,6 +577,7 @@ fn pre(n: &Node, line: &[u8], peek: Option<&Peek>) -> Pre {
             r
         }
         Node::Not(n) => not(pre(n, line, peek)),
+        Node::Named(_, n) => pre(n, line, peek),
         Node::Ids(set) => match peek {
             Some(p) => match id_key(p.id) {
                 Some(k) if set.contains(k) => Pre::Yes,
@@ -529,6 +625,7 @@ fn exact(n: &Node, e: &Entity) -> bool {
         Node::All(ns) => ns.iter().all(|n| exact(n, e)),
         Node::Any(ns) => ns.iter().any(|n| exact(n, e)),
         Node::Not(n) => !exact(n, e),
+        Node::Named(_, n) => exact(n, e),
         Node::Ids(set) => id_key(&e.id).is_some_and(|k| set.contains(k)),
         Node::Types(mask) => mask & (1 << e.kind.code()) != 0,
         Node::HasProperty { properties, .. } => properties.iter().any(|&p| live(e, p).next().is_some()),
@@ -548,11 +645,30 @@ fn exact(n: &Node, e: &Entity) -> bool {
     }
 }
 
+/// The named nodes of a tree, and the id sets.
+fn walk(n: &Node, named: &mut Vec<(u16, Arc<Node>)>, ids: &mut Vec<Arc<IdSet>>) {
+    match n {
+        Node::All(ns) | Node::Any(ns) => ns.iter().for_each(|n| walk(n, named, ids)),
+        Node::Not(n) => walk(n, named, ids),
+        Node::Named(i, inner) => {
+            named.push((*i, inner.clone()));
+            walk(inner, named, ids);
+        }
+        Node::Ids(set) => ids.push(set.clone()),
+        _ => {}
+    }
+}
+
 /// A filter ready for matching (see the module docs).
 #[derive(Debug)]
 pub struct CompiledFilter {
     root: Node,
     probe: Option<Compiled>,
+    names: Vec<String>,
+    /// Every named node of the tree, with its name's index.
+    named: Vec<(u16, Arc<Node>)>,
+    /// Every `ids` set in the tree.
+    id_sets: Vec<Arc<IdSet>>,
 }
 
 impl CompiledFilter {
@@ -571,34 +687,104 @@ impl CompiledFilter {
     /// Whether a line matches: the check before parsing, then, when it
     /// cannot tell, a probe parse of what the filter looks at.
     pub fn matches_line(&self, line: &[u8], peek: Option<&Peek>) -> Result<bool, FilterError> {
+        Ok(self.check_line(line, peek)?.0)
+    }
+
+    /// [`CompiledFilter::matches_line`], and the probe-parsed entity when a
+    /// parse was needed (to hand to [`CompiledFilter::matched_names`]).
+    pub fn check_line(&self, line: &[u8], peek: Option<&Peek>) -> Result<(bool, Option<Entity>), FilterError> {
         match self.pre(line, peek) {
-            Pre::Yes => Ok(true),
-            Pre::No => Ok(false),
+            Pre::Yes => Ok((true, None)),
+            Pre::No => Ok((false, None)),
             Pre::Maybe => {
-                let probe = self.probe.clone().unwrap_or_else(|| Compiled::new(minimal()));
-                let e = parse_entity(line, &probe).map_err(|e| FilterError::Invalid(e.to_string()))?;
-                Ok(self.matches_entity(&e))
+                let e = self.probe_parse(line)?;
+                Ok((self.matches_entity(&e), Some(e)))
             }
         }
+    }
+
+    fn probe_parse(&self, line: &[u8]) -> Result<Entity, FilterError> {
+        let probe = self.probe.clone().unwrap_or_else(|| Compiled::new(minimal()));
+        parse_entity(line, &probe).map_err(|e| FilterError::Invalid(e.to_string()))
+    }
+
+    /// The names of the named filters (`{"name": "venue", …}`, or the keys
+    /// of `{"any": {"venue": …}}`), in the order they first occur.
+    pub fn names(&self) -> &[String] {
+        &self.names
+    }
+
+    /// Which named filters match `line` (as indices into
+    /// [`CompiledFilter::names`], ascending), wherever they are in the
+    /// filter. `parsed` is the line's entity if it was parsed with at least
+    /// [`CompiledFilter::probe_options`]; without it, the line is parsed
+    /// when a named filter needs it.
+    pub fn matched_names(
+        &self,
+        line: &[u8],
+        peek: Option<&Peek>,
+        parsed: Option<&Entity>,
+    ) -> Result<Vec<u16>, FilterError> {
+        if self.names.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut probed = None;
+        let mut out = Vec::new();
+        for (i, n) in &self.named {
+            let (i, n) = (*i, &**n);
+            if out.contains(&i) {
+                continue;
+            }
+            let yes = match pre(n, line, peek) {
+                Pre::Yes => true,
+                Pre::No => false,
+                Pre::Maybe => {
+                    let e = match parsed {
+                        Some(e) => e,
+                        None => probed.insert(self.probe_parse(line)?),
+                    };
+                    exact(n, e)
+                }
+            };
+            if yes {
+                out.push(i);
+            }
+        }
+        out.sort_unstable();
+        Ok(out)
+    }
+
+    /// Whether the filter has `ids` (to report the ids a dump lacks).
+    pub fn has_ids(&self) -> bool {
+        !self.id_sets.is_empty()
+    }
+
+    /// Whether an [`id_key`] is one of the filter's `ids` (anywhere in it).
+    #[inline]
+    pub fn requests(&self, key: i64) -> bool {
+        self.id_sets.iter().any(|s| s.contains(key))
+    }
+
+    /// The filter's `ids` (anywhere in it) not in `seen`, as ids
+    /// (`Q42`), in key order.
+    pub fn missing_ids(&self, seen: &IdSet) -> Vec<String> {
+        let ids = &self.id_sets;
+        let mut keys: Vec<i64> = ids
+            .iter()
+            .flat_map(|s| s.iter())
+            .filter(|&k| !seen.contains(k))
+            .collect();
+        if ids.len() > 1 {
+            keys.sort_unstable();
+            keys.dedup();
+        }
+        keys.into_iter().filter_map(crate::ids::id_from_key).collect()
     }
 
     /// The options a probe parse uses (`None` when the filter decides on
     /// the type and id alone).
     pub fn probe_options(&self) -> Option<&Compiled> {
         self.probe.as_ref()
-    }
-
-    /// The ids of an `ids` filter at the top (or under `all`), to report
-    /// requested ids that were not found.
-    pub fn id_count(&self) -> Option<usize> {
-        fn find(n: &Node) -> Option<usize> {
-            match n {
-                Node::Ids(s) => Some(s.len()),
-                Node::All(ns) => ns.iter().find_map(find),
-                _ => None,
-            }
-        }
-        find(&self.root)
     }
 }
 
@@ -681,6 +867,53 @@ mod tests {
             .compile(None)
             .unwrap();
         assert_eq!(f.pre(line, peek(line).as_ref()), Pre::Maybe);
+    }
+
+    #[test]
+    fn named() {
+        let f = Filter::parse_json(
+            r#"{"not":{"name":"german","claim":"P17=Q183"},
+                "any":{"dutch":{"sitelink":"nlwiki"},"country":{"instanceOf":"Q6256"},"person":{"instanceOf":"Q5"}}}"#,
+        )
+        .unwrap()
+        .compile(None)
+        .unwrap();
+        // In the order written.
+        assert_eq!(f.names(), ["german", "dutch", "country", "person"]);
+        let line = BELGIUM.as_bytes();
+        let p = peek(line);
+        assert!(f.matches_line(line, p.as_ref()).unwrap());
+        // Every named filter that matches, not only the first.
+        assert_eq!(f.matched_names(line, p.as_ref(), None).unwrap(), [1, 2]);
+        let unnamed = Filter::parse_json(r#"{"any":[{"ids":"Q31"}]}"#)
+            .unwrap()
+            .compile(None)
+            .unwrap();
+        assert!(unnamed.names().is_empty());
+        assert!(unnamed.matched_names(line, p.as_ref(), None).unwrap().is_empty());
+        assert!(Filter::parse_json(r#"{"name":3,"ids":"Q1"}"#).is_err());
+    }
+
+    #[test]
+    fn item_numbers_and_missing_ids() {
+        let numbers: &[u32] = &[31, 999_999_999];
+        let v: serde_json::Value =
+            serde_json::from_str(r#"{"any":[{"ids":{"$items":0}},{"ids":["P31","Q31"]}]}"#).unwrap();
+        let f = Filter::from_json_with(&v, &[numbers]).unwrap().compile(None).unwrap();
+        let line = BELGIUM.as_bytes();
+        assert!(f.matches_line(line, peek(line).as_ref()).unwrap());
+        assert!(f.has_ids());
+        assert!(f.requests(id_key("Q999999999").unwrap()));
+        assert!(!f.requests(id_key("Q32").unwrap()));
+        let seen = IdSetBuilder::new();
+        seen.insert(id_key("Q31").unwrap());
+        assert_eq!(f.missing_ids(&seen.freeze()), ["Q999999999", "P31"]);
+        assert!(Filter::from_json_with(&v, &[]).is_err());
+        assert!(!Filter::parse_json(r#"{"type":"item"}"#)
+            .unwrap()
+            .compile(None)
+            .unwrap()
+            .has_ids());
     }
 
     #[test]
