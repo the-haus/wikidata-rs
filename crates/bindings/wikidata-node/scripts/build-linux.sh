@@ -12,6 +12,15 @@ TARGET="$1"
 
 if [ -f /etc/alpine-release ]; then
   apk add --no-cache build-base curl bash
+  # A Node addon is a cdylib that Node dlopen()s: link musl's libc (and
+  # libunwind/libgcc_s) dynamically. Rust's static-CRT default on musl makes
+  # the loader fail with "_Unwind_Resume: initial-exec TLS resolves to
+  # dynamic definition".
+  export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=-crt-static"
+  # mimalloc's default initial-exec TLS fails the same way under dlopen()
+  # ("(null): initial-exec TLS resolves to dynamic definition"); musl has no
+  # static-TLS surplus for libraries loaded after startup.
+  FEATURES="mimalloc/local_dynamic_tls"
 fi
 curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
 # shellcheck source=/dev/null
@@ -20,6 +29,6 @@ curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolcha
 corepack enable
 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 yarn install --immutable
 cd crates/bindings/wikidata-node
-yarn exec napi build --platform --release --strip --js false --target "$TARGET"
+yarn exec napi build --platform --release --strip --js false --target "$TARGET" ${FEATURES:+--features "$FEATURES"}
 yarn run build:ts
 yarn run test

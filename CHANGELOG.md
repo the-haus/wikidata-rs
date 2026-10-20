@@ -4,6 +4,10 @@
 
 First release.
 
+`@wikidata-rs/node` 0.1.0 was released locally for six platforms
+(macOS arm64/x64, Linux arm64/x64 on glibc 2.31+ and on musl); the
+Windows packages follow from CI.
+
 ### Reading
 
 - Wikidata JSON dumps from a file or an `http(s)://` URL: bzip2 (single
