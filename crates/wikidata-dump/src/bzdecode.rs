@@ -386,8 +386,11 @@ const NEXT: u32 = 0x000f_ffff;
 /// in cycle order. Only `tt` is read (3.6 MB for a full block, like
 /// libbzip2), with eight loads in flight instead of one.
 ///
-/// Returns `false` when the chains do not cover the block (corrupt data
-/// can make the T-vector several cycles).
+/// The T-vector is several cycles when the text is periodic (`u` repeated
+/// `k` times gives `k` cycles of `|u|`): the text is then origPtr's cycle
+/// repeated to the block's length, as libbzip2's `n`-step walk gives.
+/// Corrupt data can also make several cycles; the block CRC catches it.
+/// Returns `false` when the chains do not close origPtr's cycle.
 #[inline(never)]
 fn walk(tt: &mut [u32], orig_ptr: usize, bufs: &mut [u8], out: &mut Vec<u8>) -> bool {
     let n = tt.len();
@@ -444,12 +447,24 @@ fn walk(tt: &mut [u32], orig_ptr: usize, bufs: &mut [u8], out: &mut Vec<u8>) -> 
     // Join the segments in cycle order, from the text's first byte.
     out.clear();
     let mut c = 0;
+    let mut closed = false;
     for _ in 0..count {
         out.extend_from_slice(&bufs[c * MAX_BLOCK..c * MAX_BLOCK + len[c]]);
         if hit[c] == first {
+            closed = true;
             break;
         }
         c = starts[..count].iter().position(|&s| s == hit[c]).unwrap_or(0);
+    }
+    // A periodic text (one pattern repeated end to end) makes the
+    // T-vector several cycles of equal length, and origPtr's cycle holds
+    // one period. libbzip2 walks `n` steps from origPtr, going round that
+    // cycle again and again: the period, repeated to `n` bytes.
+    if closed && !out.is_empty() && out.len() < n {
+        while out.len() < n {
+            let more = (n - out.len()).min(out.len());
+            out.extend_from_within(..more);
+        }
     }
     out.len() == n
 }
@@ -751,7 +766,7 @@ fn decode_with(data: &[u8], nbits: u64, out: &mut Vec<u8>, s: &mut Scratch) -> R
     // Walk from both ends at once (see the module docs): output byte n
     // (1-based) is L[next^n(origPtr)], and the last one is L[origPtr].
     if !walk(&mut tt[..nblock], orig_ptr, &mut s.chains, &mut s.bwt) {
-        return Err(DecodeError::Invalid("the BWT is not one cycle"));
+        return Err(DecodeError::Invalid("the BWT walk does not close"));
     }
     let bwt = &s.bwt[..];
     // Undo the initial run-length encoding: four equal bytes are followed
@@ -878,6 +893,26 @@ mod tests {
             })
             .collect();
         roundtrip(&skewed, 9);
+    }
+
+    #[test]
+    fn decodes_periodic_blocks() {
+        // A block whose text is one pattern repeated end to end has a
+        // T-vector of several cycles (the Wikidata 20261012 dump has one at
+        // byte 547,678,139); libbzip2 decodes it, and so must this.
+        let mut seed = 0x9e37_79b9_7f4a_7c15;
+        roundtrip(&b"abc".repeat(200_000), 9);
+        roundtrip(&b"abc".repeat(200_000), 1);
+        roundtrip(&b"ab".repeat(400_000), 9);
+        let unit: Vec<u8> = (0..997).map(|_| b'a' + (rng(&mut seed) % 26) as u8).collect();
+        roundtrip(&unit.repeat(890), 9);
+        // Periodic only after the initial run-length encoding:
+        // 255 'a's are "aaaa" and a count of 251, 3000 times.
+        roundtrip(&vec![b'a'; 255 * 3000], 9);
+        // Not periodic, for contrast: one byte more.
+        let mut almost = b"abc".repeat(200_000);
+        almost.push(b'x');
+        roundtrip(&almost, 9);
     }
 
     #[test]

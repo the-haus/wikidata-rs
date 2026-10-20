@@ -4,6 +4,14 @@
 
 What Festimap asked for, each with a regression test.
 
+### Fixed
+
+- bzip2: a block whose text is periodic (one pattern repeated end to end)
+  was rejected as "the BWT is not one cycle". Its T-vector is several
+  cycles; the text is origPtr's cycle repeated to the block's length, as
+  libbzip2 decodes it. The 20261012 Wikidata dump has such a block at
+  byte 547,678,139, so 0.1.0 could not read past it.
+
 ### Node.js
 
 - `streamEntities`, `extract`, `fileInfo` and the new `ClassIndex.build`
