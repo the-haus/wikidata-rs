@@ -14,10 +14,12 @@ pub fn sample() -> Vec<u8> {
     std::fs::read(sample_path()).unwrap()
 }
 
-/// The entity lines of the sample, without commas.
+/// The entity lines of the sample, without commas (and without a `\r`,
+/// should the checkout have CRLF line endings).
 pub fn sample_lines() -> Vec<Vec<u8>> {
     sample()
         .split(|&b| b == b'\n')
+        .map(|l| l.strip_suffix(b"\r").unwrap_or(l))
         .map(|l| l.strip_suffix(b",").unwrap_or(l).to_vec())
         .filter(|l| l.first() == Some(&b'{'))
         .collect()

@@ -112,3 +112,31 @@ fn bzip2_extract_is_multi_stream_and_parallel() {
         assert!(o.stdout == data);
     }
 }
+
+#[test]
+fn crlf_dump_extracts_like_lf() {
+    // A dump with CRLF line endings reads, and extracts, the same as with LF.
+    let d = tmp();
+    let lf = sample();
+    assert!(!lf.contains(&b'\r'), "fixtures/sample.json must be checked out with LF");
+    let crlf: Vec<u8> = lf
+        .iter()
+        .flat_map(|&b| if b == b'\n' { vec![b'\r', b'\n'] } else { vec![b] })
+        .collect();
+    let mut outs = Vec::new();
+    for (name, data) in [("lf.json", &lf), ("crlf.json", &crlf)] {
+        let src = write(&d, name, data);
+        let out = d.join(format!("out-{name}"));
+        let stats = extract(
+            &Dump::open(src.as_path()).unwrap(),
+            &ExtractOptions::default(),
+            &out,
+            &mut |_| Flow::Continue,
+        )
+        .unwrap();
+        assert_eq!(stats.scan.matched, 41, "{name}");
+        outs.push(std::fs::read(&out).unwrap());
+    }
+    assert!(!outs[1].contains(&b'\r'));
+    assert!(outs[0] == outs[1]);
+}

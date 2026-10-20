@@ -9,12 +9,13 @@ const here = dirname(fileURLToPath(import.meta.url));
 /** The repository's sample dump (41 entities; see scripts/make-sample-dump.mjs). */
 export const sample = join(here, "..", "..", "..", "..", "fixtures", "sample.json");
 
-/** The sample's entity lines, without commas. */
+/** The sample's entity lines, without commas (and without a `\r`, should
+ * the checkout have CRLF line endings). */
 export function sampleLines(): string[] {
   return readFileSync(sample, "utf8")
     .split("\n")
-    .filter((l) => l.startsWith("{"))
-    .map((l) => (l.endsWith(",") ? l.slice(0, -1) : l));
+    .map((l) => l.replace(/,?\r?$/, ""))
+    .filter((l) => l.startsWith("{"));
 }
 
 export const sampleIds = (): string[] => sampleLines().map((l) => (JSON.parse(l) as { id: string }).id);

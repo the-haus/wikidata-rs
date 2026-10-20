@@ -44,7 +44,8 @@ pub struct Progress {
 pub enum Event<T> {
     /// Records of one chunk, in file order.
     Records(Vec<T>),
-    /// Progress, about every 100 ms.
+    /// Progress, about every 100 ms, and once more when the scan ends
+    /// (finished or stopped), with its final totals.
     Progress(Progress),
 }
 
@@ -267,9 +268,9 @@ pub(crate) fn scan<T: Send + 'static>(
             }
         }
     }
-    if !stats.stopped {
-        let _ = sink(Event::Progress(progress(&stats)));
-    }
+    // The last progress event always carries the final totals: at the end,
+    // and when the scan stops early (a limit, or a sink saying `Stop`).
+    let _ = sink(Event::Progress(progress(&stats)));
     stats.bytes_in = read.bytes_in.get();
     stats.bytes_out = read.bytes_out.load(Ordering::Relaxed);
     stats.blocks = read.blocks.load(Ordering::Relaxed);

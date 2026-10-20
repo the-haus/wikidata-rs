@@ -309,7 +309,7 @@ export interface CommonOptions {
   limit?: number;
   /** Read a truncated dump (a partial download) up to its last whole entity instead of failing. */
   allowTruncated?: boolean;
-  /** Progress, about every 200 ms. */
+  /** Progress, about every 200 ms, and a last event with the final totals. */
   onProgress?: (p: Progress) => void;
   /** Abort the task. */
   signal?: AbortSignal;

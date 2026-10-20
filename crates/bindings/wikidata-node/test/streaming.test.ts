@@ -159,13 +159,32 @@ describe("streaming", () => {
   it("reports progress with rates", async () => {
     const dump = await openDump(big);
     const progress: Progress[] = [];
-    await dump.entities({ onProgress: (p) => progress.push(p), json: false }).toArray();
+    const stream = dump.entities({ onProgress: (p) => progress.push(p), json: false });
+    await stream.toArray();
+    const stats = await stream.stats;
+    // The last event carries the final totals, however the throttle fell.
     const last = progress.at(-1)!;
     expect(last.entities).toBe(N);
+    expect(last.matched).toBe(N);
+    expect(last.entities).toBe(stats.entities);
+    expect(last.bytesIn).toBe(stats.bytesIn);
+    expect(last.bytesOut).toBe(stats.bytesOut);
     expect(last.bytesTotal).toBe(dump.size);
     expect(last.fraction).toBe(1);
     expect(last.mbPerSecondOut).toBeGreaterThan(0);
     expect(last.entitiesPerSecond).toBeGreaterThan(0);
+  });
+
+  it("reports the final totals when a limit stops the scan", async () => {
+    const dump = await openDump(big);
+    const progress: Progress[] = [];
+    const stream = dump.entities({ onProgress: (p) => progress.push(p), json: false, limit: 1234 });
+    expect(await stream.toArray()).toHaveLength(1234);
+    const stats = await stream.stats;
+    expect(stats.stopped).toBe(true);
+    const last = progress.at(-1)!;
+    expect(last.matched).toBe(1234);
+    expect(last.entities).toBe(stats.entities);
   });
 
   it("surfaces errors thrown by the consumer and stops", async () => {

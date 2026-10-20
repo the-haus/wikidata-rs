@@ -251,9 +251,11 @@ struct Needs {
     sites: FxHashSet<String>,
 }
 
-/// Byte strings, one of which must occur.
+/// Byte strings, one of which must occur. The single-needle `Finder` is
+/// boxed: it holds its searcher inline (hundreds of bytes), which would make
+/// every `Needles`, and so every filter node, that large.
 enum Needles {
-    One(Finder<'static>),
+    One(Box<Finder<'static>>),
     Many(AhoCorasick),
 }
 
@@ -261,7 +263,7 @@ impl Needles {
     fn new(patterns: Vec<Vec<u8>>) -> Option<Needles> {
         match patterns.len() {
             0 => None,
-            1 => Some(Needles::One(Finder::new(&patterns[0]).into_owned())),
+            1 => Some(Needles::One(Box::new(Finder::new(&patterns[0]).into_owned()))),
             _ => Some(Needles::Many(
                 AhoCorasick::builder()
                     .match_kind(aho_corasick::MatchKind::LeftmostFirst)

@@ -39,6 +39,10 @@ fn every_format_reads_the_same() {
         write(&d, "one.json.bz2", &bz2(&data, 9)),
         write(&d, "multi.json.bz2", &multi),
         write(&d, "lines.jsonl", &jsonl),
+        // CRLF line endings (a dump saved or checked out on Windows).
+        write(&d, "crlf.json", &crlf(&data)),
+        write(&d, "crlf.json.bz2", &bz2(&crlf(&data), 9)),
+        write(&d, "crlf.jsonl", &crlf(&jsonl)),
     ];
     for name in ["c.json.gz", "c.json.zst", "c.jsonl.zst"] {
         let p = d.join(name);
@@ -58,6 +62,19 @@ fn every_format_reads_the_same() {
             assert!(!stats.truncated);
         }
     }
+}
+
+/// `data` with every `\n` made `\r\n` (an LF fixture assumed).
+fn crlf(data: &[u8]) -> Vec<u8> {
+    assert!(!data.contains(&b'\r'));
+    let mut out = Vec::with_capacity(data.len() + data.len() / 64);
+    for &b in data {
+        if b == b'\n' {
+            out.push(b'\r');
+        }
+        out.push(b);
+    }
+    out
 }
 
 #[test]
@@ -414,4 +431,45 @@ fn file_info_counts() {
     assert_eq!(info.largest.id, "Q31");
     let j = serde_json::to_value(&info).unwrap();
     assert_eq!(j["types"]["items"], 37);
+}
+
+#[test]
+fn last_progress_has_the_final_totals() {
+    // However the scan ends (finished, a limit, the sink stopping), its last
+    // progress event carries the totals of the returned stats.
+    let dump = Dump::open(sample_path()).unwrap();
+    for (limit, stop_after) in [(None, None), (Some(5), None), (None, Some(1))] {
+        for threads in [1, 3] {
+            let mut opts = EntityOptions::default();
+            opts.scan.threads = threads;
+            opts.scan.limit = limit;
+            let mut last = None;
+            let mut batches = 0;
+            let stats = wikidata_export::entities(&dump, &opts, &mut |e| match e {
+                wikidata_export::Event::Progress(p) => {
+                    last = Some(p);
+                    Flow::Continue
+                }
+                wikidata_export::Event::Records(_) => {
+                    batches += 1;
+                    if stop_after.is_some_and(|n| batches >= n) {
+                        Flow::Stop
+                    } else {
+                        Flow::Continue
+                    }
+                }
+            })
+            .unwrap();
+            let last = last.expect("a progress event");
+            let case = format!("limit {limit:?}, stop after {stop_after:?}, {threads} threads");
+            assert_eq!(last.entities, stats.entities, "{case}");
+            assert_eq!(last.matched, stats.matched, "{case}");
+            assert_eq!(last.bytes_out, stats.bytes_out, "{case}");
+            assert_eq!(stats.stopped, limit.is_some() || stop_after.is_some(), "{case}");
+            if limit.is_none() && stop_after.is_none() {
+                assert_eq!(last.entities, 41);
+                assert_eq!(last.bytes_in, stats.bytes_in);
+            }
+        }
+    }
 }

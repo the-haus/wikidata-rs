@@ -139,7 +139,7 @@ struct Sender {
     credits: Arc<Credits>,
     batch: EntityBatch,
     batch_size: usize,
-    last_progress: Option<Instant>,
+    progress: Throttle,
 }
 
 impl Sender {
@@ -173,19 +173,39 @@ impl Sender {
                 Flow::Continue
             }
             Event::Progress(p) => {
-                progress(&self.cb, &mut self.last_progress, p);
+                self.progress.offer(&self.cb, p);
                 Flow::Continue
             }
         }
     }
 }
 
-/// Send progress at most every 200 ms.
-fn progress(cb: &Callback, last: &mut Option<Instant>, p: Progress) {
-    let now = Instant::now();
-    if last.is_none_or(|t| now - t >= Duration::from_millis(200)) {
-        *last = Some(now);
-        cb.call(StreamEvent::Progress(p), ThreadsafeFunctionCallMode::NonBlocking);
+/// Sends progress at most every 200 ms, keeping the latest event it held
+/// back so that [`Throttle::finish`] can send it: the last progress a
+/// consumer sees always carries the task's final totals.
+#[derive(Default)]
+struct Throttle {
+    last: Option<Instant>,
+    held: Option<Progress>,
+}
+
+impl Throttle {
+    fn offer(&mut self, cb: &Callback, p: Progress) {
+        let now = Instant::now();
+        if self.last.is_none_or(|t| now - t >= Duration::from_millis(200)) {
+            self.last = Some(now);
+            self.held = None;
+            cb.call(StreamEvent::Progress(p), ThreadsafeFunctionCallMode::NonBlocking);
+        } else {
+            self.held = Some(p);
+        }
+    }
+
+    /// Send the held-back event, if any (before the task's end event).
+    fn finish(&mut self, cb: &Callback) {
+        if let Some(p) = self.held.take() {
+            cb.call(StreamEvent::Progress(p), ThreadsafeFunctionCallMode::Blocking);
+        }
     }
 }
 
@@ -212,7 +232,7 @@ where
                 credits,
                 batch: EntityBatch::default(),
                 batch_size: batch_size.max(1),
-                last_progress: None,
+                progress: Throttle::default(),
             };
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&mut |e| sender.on_event(e))))
                 .unwrap_or_else(|p| Err(format!("internal error: {}", panic_message(&p))));
@@ -222,6 +242,9 @@ where
                 }
                 stats
             });
+            if !sender.credits.is_closed() {
+                sender.progress.finish(&cb);
+            }
             let event = match result {
                 Ok(stats) => StreamEvent::End(stats),
                 Err(e) => StreamEvent::Error(e),
@@ -244,17 +267,20 @@ where
     thread::Builder::new()
         .name("wikidata-task".into())
         .spawn(move || {
-            let mut last = None;
+            let mut throttle = Throttle::default();
             let mut on_progress = |p: Progress| {
                 if credits.is_closed() {
                     return Flow::Stop;
                 }
-                progress(&cb, &mut last, p);
+                throttle.offer(&cb, p);
                 Flow::Continue
             };
             let event = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&mut on_progress)))
                 .unwrap_or_else(|p| Err(format!("internal error: {}", panic_message(&p))))
                 .map_or_else(StreamEvent::Error, StreamEvent::End);
+            if !credits.is_closed() {
+                throttle.finish(&cb);
+            }
             cb.call(event, ThreadsafeFunctionCallMode::Blocking);
         })
         .expect("spawn task thread");
