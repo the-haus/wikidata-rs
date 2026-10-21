@@ -16,7 +16,7 @@ concurrency:
 jobs:
   fmt-clippy:
     name: rustfmt + clippy
-    runs-on: ubuntu-latest
+    runs-on: bitrise-runner-the-haus-w
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-rust
@@ -31,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [bitrise-runner-the-haus-w, bitrise-runner-the-haus, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     steps:
@@ -43,7 +43,7 @@ jobs:
 
   package:
     name: release readiness (versions, crate packaging, workflows)
-    runs-on: ubuntu-latest
+    runs-on: bitrise-runner-the-haus-w
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-node-yarn

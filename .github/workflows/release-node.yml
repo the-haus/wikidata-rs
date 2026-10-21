@@ -41,12 +41,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, triple: linux-x64-gnu, image: "node:22-bullseye" }
+          - { os: bitrise-runner-the-haus-w, target: x86_64-unknown-linux-gnu, triple: linux-x64-gnu, image: "node:22-bullseye" }
           - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, triple: linux-arm64-gnu, image: "node:22-bullseye" }
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, triple: linux-x64-musl, image: "node:22-alpine" }
+          - { os: bitrise-runner-the-haus-w, target: x86_64-unknown-linux-musl, triple: linux-x64-musl, image: "node:22-alpine" }
           - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, triple: linux-arm64-musl, image: "node:22-alpine" }
           - { os: macos-15-intel, target: x86_64-apple-darwin, triple: darwin-x64 }
-          - { os: macos-latest, target: aarch64-apple-darwin, triple: darwin-arm64 }
+          - { os: bitrise-runner-the-haus, target: aarch64-apple-darwin, triple: darwin-arm64 }
           - { os: windows-latest, target: x86_64-pc-windows-msvc, triple: win32-x64-msvc }
           - { os: windows-11-arm, target: aarch64-pc-windows-msvc, triple: win32-arm64-msvc, vs-arch: arm64 }
     defaults:
@@ -97,7 +97,7 @@ jobs:
   pack:
     name: pack
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: bitrise-runner-the-haus-w
     timeout-minutes: 15
     defaults:
       run:
@@ -165,12 +165,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest, triple: linux-x64-gnu, image: "node:18-bullseye" }
+          - { os: bitrise-runner-the-haus-w, triple: linux-x64-gnu, image: "node:18-bullseye" }
           - { os: ubuntu-24.04-arm, triple: linux-arm64-gnu, image: "node:18-bullseye" }
-          - { os: ubuntu-latest, triple: linux-x64-musl, image: "node:18-alpine" }
+          - { os: bitrise-runner-the-haus-w, triple: linux-x64-musl, image: "node:18-alpine" }
           - { os: ubuntu-24.04-arm, triple: linux-arm64-musl, image: "node:18-alpine" }
           - { os: macos-15-intel, triple: darwin-x64 }
-          - { os: macos-latest, triple: darwin-arm64 }
+          - { os: bitrise-runner-the-haus, triple: darwin-arm64 }
           - { os: windows-latest, triple: win32-x64-msvc }
           # Node 18 was never built for Windows on Arm; 20 is the first.
           - { os: windows-11-arm, triple: win32-arm64-msvc, node: "20" }
@@ -202,7 +202,7 @@ jobs:
     name: publish
     needs: install
     if: ${{ !inputs.dry-run }}
-    runs-on: ubuntu-latest
+    runs-on: bitrise-runner-the-haus-w
     timeout-minutes: 15
     environment: npm-publish
     permissions:

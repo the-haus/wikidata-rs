@@ -1,0 +1,5 @@
+# Runner labels actionlint does not know: the-haus's Bitrise pools.
+self-hosted-runner:
+  labels:
+    - bitrise-runner-the-haus # macOS, Apple M2 Pro (arm64)
+    - bitrise-runner-the-haus-w # Linux x64, AMD Zen4
