@@ -124,7 +124,7 @@ const entities = [
       st(V.url("P856", "https://www.belgium.be/")),
       st(V.qty("P1082", "+11697557", null), {
         rank: "preferred",
-        qualifiers: [V.time("P585", "+2023-01-01T00:00:00Z", 11)],
+        qualifiers: [V.time("P585", "+2023-01-01T00:00:00Z", 11), V.item("P459", "Q39825")],
         references: [[V.item("P248", "Q12483"), V.time("P813", "+2024-05-01T00:00:00Z", 11)]],
       }),
       st(V.qty("P1082", "+11000000", null), { qualifiers: [V.time("P585", "+2010-00-00T00:00:00Z", 9)] }),
@@ -305,3 +305,203 @@ entities.push(reordered);
 const lines = entities.map(php);
 writeFileSync(join(root, "fixtures/sample.json"), "[\n" + lines.join(",\n") + "\n]\n");
 console.log(`fixtures/sample.json: ${lines.length} entities`);
+
+// fixtures/places.json: places and what is in them, for the place index
+// (P17, P131 chains, a cycle, P159) and the labels of referenced items.
+// Ids from Q9000 are invented. Items referenced by others come both
+// before and after them in the file.
+rev = 2_100_000_000;
+const place = (id, en, nl, cl, extra = {}) =>
+  entity(id, { labels: nl ? { en, nl } : { en }, cl, ...extra });
+const places = [
+  place("Q55", "Netherlands", "Nederland", [st(V.item("P31", "Q6256")), st(V.item("P17", "Q55"))]),
+  place("Q31", "Belgium", "België", [st(V.item("P31", "Q6256")), st(V.item("P17", "Q31"))]),
+  place("Q145", "United Kingdom", "Verenigd Koninkrijk", [st(V.item("P31", "Q6256")), st(V.item("P17", "Q145"))]),
+  // Landgraaf (municipality, in NL) ⊃ Schaesberg (village) ⊃ Megaland (venue).
+  place("Q9001", "Landgraaf", "Landgraaf", [st(V.item("P31", "Q2039348")), st(V.item("P17", "Q55"))]),
+  place("Q9002", "Schaesberg", "Schaesberg", [st(V.item("P31", "Q532")), st(V.item("P131", "Q9001"))]),
+  place("Q9003", "Megaland", null, [st(V.item("P31", "Q8719053")), st(V.item("P131", "Q9002"))]),
+  // A record label in NL with its headquarters in London.
+  place("Q9004", "Example Records", null, [
+    st(V.item("P31", "Q18127")),
+    st(V.item("P17", "Q55")),
+    st(V.item("P159", "Q9005")),
+  ]),
+  place("Q9005", "London", "Londen", [st(V.item("P31", "Q515")), st(V.item("P17", "Q145"))]),
+  // A P131 cycle, and a venue in it.
+  place("Q9006", "Loop A", null, [st(V.item("P131", "Q9007"))]),
+  place("Q9007", "Loop B", null, [st(V.item("P131", "Q9006"))]),
+  place("Q9008", "Venue in a loop", null, [st(V.item("P31", "Q8719053")), st(V.item("P131", "Q9006"))]),
+  // A festival in Schaesberg, of a genre further down the file; a
+  // historic P131 is deprecated and does not count.
+  place("Q9009", "Megaland Festival", "Megaland Festival", [
+    st(V.item("P31", "Q868557")),
+    st(V.item("P131", "Q9002")),
+    st(V.item("P131", "Q9013"), { rank: "deprecated" }),
+    st(V.item("P136", "Q9011"), { qualifiers: [V.item("P407", "Q7411")] }),
+    st(V.time("P571", "+1999-00-00T00:00:00Z", 9)),
+  ]),
+  place("Q9011", "rock music", "rockmuziek", [st(V.item("P31", "Q188451"))]),
+  place("Q9012", "Unreferenced", "Niet verwezen", []),
+  // Werchter (village) in Rotselaar (municipality, in BE).
+  place("Q9013", "Werchter", "Werchter", [st(V.item("P131", "Q9014"))]),
+  place("Q9014", "Rotselaar", "Rotselaar", [st(V.item("P17", "Q31"))]),
+  place("Q7411", "Dutch", "Nederlands", [st(V.item("P31", "Q34770"))]),
+];
+const placeLines = places.map(php);
+writeFileSync(join(root, "fixtures/places.json"), "[\n" + placeLines.join(",\n") + "\n]\n");
+console.log(`fixtures/places.json: ${placeLines.length} entities`);
+
+// fixtures/wikidatawiki-{redirect,page}.sql: the SQL dumps' tables, written
+// like mysqldump writes them, for the redirect index. Q1 and Q7 were merged
+// into items of sample.json, Q8 into one it lacks, Q9 into Q10 and that
+// into Q42 (a double redirect); there are also a property redirect and a
+// talk page.
+function sqlDump(table, columns, rows) {
+  const value = (v) =>
+    v === null ? "NULL" : typeof v === "number" ? String(v) : `'${String(v).replace(/[\\']/g, (c) => "\\" + c)}'`;
+  const insert = (rs) => `INSERT INTO \`${table}\` VALUES ${rs.map((r) => `(${r.map(value).join(",")})`).join(",")};`;
+  return [
+    "-- MySQL dump 10.19  Distrib 10.3.38-MariaDB, for debian-linux-gnu (x86_64)",
+    "--",
+    `-- Host: 10.64.0.1    Database: wikidatawiki`,
+    "/*!40101 SET NAMES binary*/;",
+    `DROP TABLE IF EXISTS \`${table}\`;`,
+    `CREATE TABLE \`${table}\` (`,
+    ...columns.map(([name, type]) => `  \`${name}\` ${type},`),
+    `  PRIMARY KEY (\`${columns[0][0]}\`)`,
+    ") ENGINE=InnoDB DEFAULT CHARSET=binary;",
+    `/*!40000 ALTER TABLE \`${table}\` DISABLE KEYS */;`,
+    // Two statements, as mysqldump splits long tables.
+    insert(rows.slice(0, Math.ceil(rows.length / 2))),
+    insert(rows.slice(Math.ceil(rows.length / 2))),
+    `/*!40000 ALTER TABLE \`${table}\` ENABLE KEYS */;`,
+    "",
+  ].join("\n");
+}
+const redirects = [
+  [9000001, 0, "Q42", "", ""],
+  [9000007, 0, "Q55", "", ""],
+  [9000008, 0, "Q99999999", "", ""],
+  [9000009, 0, "Q10", "", ""],
+  [9000010, 0, "Q42", "", ""],
+  [9000031, 120, "P31", "", ""],
+];
+writeFileSync(
+  join(root, "fixtures/wikidatawiki-redirect.sql"),
+  sqlDump(
+    "redirect",
+    [
+      ["rd_from", "int(8) unsigned NOT NULL DEFAULT 0"],
+      ["rd_namespace", "int(11) NOT NULL DEFAULT 0"],
+      ["rd_title", "varbinary(255) NOT NULL DEFAULT ''"],
+      ["rd_interwiki", "varbinary(32) DEFAULT NULL"],
+      ["rd_fragment", "varbinary(255) DEFAULT NULL"],
+    ],
+    redirects,
+  ),
+);
+const page = (id, ns, title, redirect) => [id, ns, title, redirect, 0, 0.123456789, "20261001120000", null, 1, 100, "wikibase-item", null];
+const pages = [
+  ...entities.filter((e) => e.ns === 0).map((e) => page(e.pageid, 0, e.title, 0)),
+  page(9000001, 0, "Q1", 1),
+  page(9000007, 0, "Q7", 1),
+  page(9000008, 0, "Q8", 1),
+  page(9000009, 0, "Q9", 1),
+  page(9000010, 0, "Q10", 1),
+  page(9000031, 120, "P99", 1),
+  page(9000099, 1, "Q1", 0),
+];
+writeFileSync(
+  join(root, "fixtures/wikidatawiki-page.sql"),
+  sqlDump(
+    "page",
+    [
+      ["page_id", "int(8) unsigned NOT NULL"],
+      ["page_namespace", "int(11) NOT NULL DEFAULT 0"],
+      ["page_title", "varbinary(255) NOT NULL DEFAULT ''"],
+      ["page_is_redirect", "tinyint(1) unsigned NOT NULL DEFAULT 0"],
+      ["page_is_new", "tinyint(1) unsigned NOT NULL DEFAULT 0"],
+      ["page_random", "double unsigned NOT NULL DEFAULT 0"],
+      ["page_touched", "binary(14) NOT NULL"],
+      ["page_links_updated", "varbinary(14) DEFAULT NULL"],
+      ["page_latest", "int(8) unsigned NOT NULL DEFAULT 0"],
+      ["page_len", "int(8) unsigned NOT NULL DEFAULT 0"],
+      ["page_content_model", "varbinary(32) DEFAULT NULL"],
+      ["page_lang", "varbinary(35) DEFAULT NULL"],
+    ],
+    pages,
+  ),
+);
+console.log(`fixtures/wikidatawiki-{redirect,page}.sql: ${redirects.length} redirects, ${pages.length} pages`);
+
+// fixtures/incremental.xml: a day's incremental dump
+// (wikidatawiki-<date>-pages-meta-hist-incr.xml), written like MediaWiki's
+// XML export: Q42 edited twice (its label changed), Q1072 once, Q7 merged
+// into Q55 (a redirect), a discussion page (wikitext), a property and a
+// lexeme, and an item whose newest revision text is deleted.
+const xml = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const byId = Object.fromEntries(entities.map((e) => [e.id, e]));
+// The stored JSON: the dump's, without the page fields.
+const stored = (e, change = (x) => x) => {
+  const { pageid, ns, title, lastrevid, modified, ...rest } = e;
+  void pageid, ns, title, lastrevid, modified;
+  return php(change(structuredClone(rest)));
+};
+let revid = 2_200_000_000;
+const revision = (text, { model = "wikibase-item", minute = 0, deleted = false } = {}) => {
+  const id = ++revid;
+  const ts = `2026-10-22T10:${String(minute).padStart(2, "0")}:00Z`;
+  const body = deleted
+    ? `      <text bytes="${text.length}" deleted="deleted" />`
+    : `      <text bytes="${text.length}" sha1="0000000000000000000000000000000" xml:space="preserve">${xml(text)}</text>`;
+  return [
+    "    <revision>",
+    `      <id>${id}</id>`,
+    `      <parentid>${id - 1}</parentid>`,
+    `      <timestamp>${ts}</timestamp>`,
+    "      <contributor>",
+    "        <username>Example</username>",
+    "        <id>42</id>",
+    "      </contributor>",
+    "      <comment>/* wbsetlabel-set:1|en */ example &lt;edit&gt;</comment>",
+    `      <origin>${id}</origin>`,
+    `      <model>${model}</model>`,
+    `      <format>${model === "wikitext" ? "text/x-wiki" : "application/json"}</format>`,
+    body,
+    "      <sha1>0000000000000000000000000000000</sha1>",
+    "    </revision>",
+  ].join("\n");
+};
+const xmlPage = (title, ns, id, revisions, redirect) =>
+  [
+    "  <page>",
+    `    <title>${xml(title)}</title>`,
+    `    <ns>${ns}</ns>`,
+    `    <id>${id}</id>`,
+    ...(redirect ? [`    <redirect title="${redirect}" />`] : []),
+    ...revisions,
+    "  </page>",
+  ].join("\n");
+const relabel = (label) => (e) => ({ ...e, labels: { ...e.labels, en: { language: "en", value: label } } });
+const incremental = [
+  '<mediawiki xmlns="http://www.mediawiki.org/xml/export-0.11/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mediawiki.org/xml/export-0.11/ http://www.mediawiki.org/xml/export-0.11.xsd" version="0.11" xml:lang="en">',
+  "  <siteinfo>",
+  "    <sitename>Wikidata</sitename>",
+  "    <dbname>wikidatawiki</dbname>",
+  "  </siteinfo>",
+  xmlPage("Q7", 0, 9000007, [revision(JSON.stringify({ entity: "Q7", redirect: "Q55" }), { minute: 1 })], "Q55"),
+  xmlPage("Q42", 0, 142, [
+    revision(stored(byId.Q42, relabel("Douglas Adams (first edit)")), { minute: 2 }),
+    revision(stored(byId.Q42, relabel("Douglas Adams (newest)")), { minute: 3 }),
+  ]),
+  xmlPage("Q1072", 0, 1172, [revision(stored(byId.Q1072), { minute: 4 })]),
+  xmlPage("Wikidata:Project chat", 4, 5, [revision("== A <b>question</b> ==", { model: "wikitext", minute: 5 })]),
+  xmlPage("Property:P31", 120, 3031, [revision(stored(byId.P31), { model: "wikibase-property", minute: 6 })]),
+  xmlPage("Lexeme:L7", 146, 4007, [revision(stored(byId.L7), { model: "wikibase-lexeme", minute: 7 })]),
+  xmlPage("Q2003", 0, 2103, [revision(stored(byId.Q2003), { minute: 8, deleted: true })]),
+  "</mediawiki>",
+  "",
+].join("\n");
+writeFileSync(join(root, "fixtures/incremental.xml"), incremental);
+console.log("fixtures/incremental.xml: 7 pages");

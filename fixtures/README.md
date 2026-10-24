@@ -24,5 +24,22 @@ node scripts/make-sample-dump.mjs
 The facts in it are a mix of real ones and made-up ones (ids from
 `Q5000` and `Q99000001` are invented); it is test data, not a source.
 
+The same script writes the other fixtures:
+
+- `places.json` (17 entities): places and what is in them, for the place
+  index and referenced labels: a venue in a village in a Dutch
+  municipality (P131 only), a record label with its headquarters abroad
+  (P159), a P131 cycle, a deprecated P131, and items referenced both
+  before and after the entity that refers to them (ids from `Q9000` are
+  invented).
+- `wikidatawiki-redirect.sql` and `wikidatawiki-page.sql`: the two tables
+  of Wikidata's SQL dumps the redirect index joins, written like mysqldump
+  writes them (items merged into items of `sample.json` and one it lacks,
+  a double redirect, a property redirect, a talk page).
+- `incremental.xml`: a day's incremental dump
+  (`pages-meta-hist-incr.xml`), written like MediaWiki's XML export: an item
+  edited twice, a merge (redirect), a discussion page, a property, a
+  lexeme and a deleted revision text.
+
 Benchmarks use the first 50 MB of a real dump instead; see
 [bench/README.md](../bench/README.md).

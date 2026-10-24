@@ -97,6 +97,14 @@ pub struct HttpOptions {
     pub retries: u32,
     /// Timeout for connecting and for each read.
     pub timeout: Duration,
+    /// Other URLs of the same file (mirrors): the file is then read in
+    /// ranges from all of them at once ([`crate::multi`]).
+    pub mirrors: Vec<String>,
+    /// Connections per server when reading in ranges (default 2; more
+    /// than 1 reads in ranges even without mirrors).
+    pub connections: Option<usize>,
+    /// The size of a range (default 8 MiB).
+    pub range_size: u64,
 }
 
 impl Default for HttpOptions {
@@ -105,7 +113,17 @@ impl Default for HttpOptions {
             user_agent: USER_AGENT.to_string(),
             retries: 8,
             timeout: Duration::from_secs(60),
+            mirrors: Vec::new(),
+            connections: None,
+            range_size: 8 << 20,
         }
+    }
+}
+
+impl HttpOptions {
+    /// Whether a URL is read in ranges, in parallel.
+    pub fn in_ranges(&self) -> bool {
+        !self.mirrors.is_empty() || self.connections.is_some_and(|c| c > 1)
     }
 }
 
@@ -135,19 +153,42 @@ pub struct Source {
 impl Source {
     /// Open `input` for reading from the start.
     pub fn open(input: &Input, http: &HttpOptions) -> Result<Source> {
+        Self::open_at(input, http, 0)
+    }
+
+    /// Open `input` for reading from byte `offset` (a seek, or an HTTP
+    /// `Range` request). [`Source::len`] is then what remains.
+    pub fn open_at(input: &Input, http: &HttpOptions, offset: u64) -> Result<Source> {
         match input {
             Input::Path(p) => {
-                let f = File::open(p).map_err(|e| DumpError::Io(format!("{}: {e}", p.display())))?;
-                let len = f.metadata().ok().map(|m| m.len());
+                let mut f = File::open(p).map_err(|e| DumpError::Io(format!("{}: {e}", p.display())))?;
+                let len = f.metadata().ok().map(|m| m.len().saturating_sub(offset));
+                if offset > 0 {
+                    use std::io::Seek;
+                    f.seek(io::SeekFrom::Start(offset))
+                        .map_err(|e| DumpError::Io(format!("{}: {e}", p.display())))?;
+                }
                 Ok(Source {
                     reader: Box::new(f),
                     counter: Counter::default(),
                     len,
                 })
             }
+            Input::Url(url) if http.in_ranges() => {
+                let urls: Vec<String> = std::iter::once(url.clone())
+                    .chain(http.mirrors.iter().cloned())
+                    .collect();
+                let r = crate::multi::MultiReader::open(&urls, offset, http)?;
+                let len = Some(r.len().saturating_sub(offset));
+                Ok(Source {
+                    reader: Box::new(r),
+                    counter: Counter::default(),
+                    len,
+                })
+            }
             Input::Url(url) => {
-                let r = HttpReader::open(url, http.clone(), 0)?;
-                let len = r.total;
+                let r = HttpReader::open(url, http.clone(), offset)?;
+                let len = r.total.map(|t| t.saturating_sub(offset));
                 Ok(Source {
                     reader: Box::new(r),
                     counter: Counter::default(),
@@ -273,6 +314,13 @@ impl HttpReader {
                     return Err(io::Error::other(format!(
                         "the server resumed at the wrong position ({range:?}, wanted {p})"
                     )));
+                }
+                // Opened at an offset: the size and validator come from here.
+                if self.total.is_none() {
+                    self.total = range.rsplit('/').next().and_then(|t| t.parse().ok());
+                }
+                if self.validator.is_none() {
+                    self.validator = header("etag").or_else(|| header("last-modified"));
                 }
             }
             (p, 200) if p > 0 => {

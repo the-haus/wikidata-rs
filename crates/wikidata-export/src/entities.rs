@@ -4,10 +4,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use wikidata_dump::Dump;
-use wikidata_filter::Pre;
+use wikidata_filter::{id_from_key, id_key, PlaceIndex, Pre};
 use wikidata_model::{parse_entity, truthy, Compiled, Entity, Map, ModelOptions, Pid, Text};
 
-use crate::scan::{scan, ChunkCounts, Event, Flow, ScanOptions, ScanStats, Work};
+use crate::labels::{self, Collector, LabelOptions};
+use crate::scan::{scan_with, ChunkCounts, Event, Flow, ScanOptions, ScanStats, Work};
 use crate::ExportError;
 
 /// Options for [`entities`].
@@ -28,6 +29,10 @@ pub struct EntityOptions {
     /// Choose each entity's sitelinks by its claims (replaces
     /// `model.sitelinks`).
     pub sitelinks_by: Option<ByClaim>,
+    /// Also collect the labels of the items the matching entities' kept
+    /// claims refer to ([`ScanStats::referenced_labels`]; see
+    /// [`crate::labels`]).
+    pub referenced_labels: Option<LabelOptions>,
 }
 
 /// Languages (or sites) chosen per entity by the values of its claims:
@@ -35,7 +40,8 @@ pub struct EntityOptions {
 /// item keeps `nl`, a German one `de`, and every entity `always` (`en`,
 /// `mul`) after them. The values are read from the truthy statements;
 /// for languages, the order is the fallback chain of `label` and
-/// `description`.
+/// `description`. With `places`, an entity whose claims choose nothing
+/// is looked up in the place index (its countries through P131 and P159).
 #[derive(Clone, Debug, Default)]
 pub struct ByClaim {
     /// The properties whose values choose (`P17`).
@@ -44,6 +50,8 @@ pub struct ByClaim {
     pub map: HashMap<String, Vec<String>>,
     /// Kept for every entity, after the chosen ones.
     pub always: Vec<String>,
+    /// Countries for the entities whose claims choose nothing.
+    pub places: Option<Arc<PlaceIndex>>,
 }
 
 impl ByClaim {
@@ -70,7 +78,21 @@ impl ByClaim {
             .filter_map(|s| s.value.entity_id())
             .filter_map(|id| self.map.get(id))
             .flatten();
-        for l in chosen.chain(&self.always) {
+        for l in chosen {
+            if !out.contains(l) {
+                out.push(l.clone());
+            }
+        }
+        if let (true, Some(places)) = (out.is_empty(), &self.places) {
+            for c in places.country_of(&e.id) {
+                for l in self.map.get(&c).into_iter().flatten() {
+                    if !out.contains(l) {
+                        out.push(l.clone());
+                    }
+                }
+            }
+        }
+        for l in &self.always {
             if !out.contains(l) {
                 out.push(l.clone());
             }
@@ -119,6 +141,9 @@ pub struct Record {
     /// The named filters that match it, as indices into the filter's
     /// [`names`](wikidata_filter::CompiledFilter::names).
     pub matched_by: Vec<u16>,
+    /// The filter's `ids` that were merged into it (with a redirect
+    /// index; see [`wikidata_filter::Indexes::redirects`]).
+    pub merged_from: Vec<String>,
 }
 
 /// Whether parsing with `full` reads everything the filter looks at, so
@@ -179,6 +204,13 @@ pub fn entities(
         .is_none_or(|f| f.probe_options().is_none_or(|p| covers(&full, p)));
     let json = opts.json;
     let summary = opts.summary_only;
+    if opts.referenced_labels.is_some() && opts.scan.resume.is_some() {
+        return Err(ExportError::Invalid(
+            "referenced labels cannot be collected during a resumed pass".into(),
+        ));
+    }
+    let collector = opts.referenced_labels.as_ref().map(|o| Arc::new(Collector::new(o)));
+    let worker_collector = collector.clone();
     let work: Arc<Work<Record>> = Arc::new(move |line: &[u8], p, c: &mut ChunkCounts| {
         let mut probed = false;
         // The probe parse, kept for the named filters.
@@ -225,6 +257,13 @@ pub fn entities(
         if !extra.is_empty() {
             e.claims.0.retain(|(p, _)| !extra.contains(p));
         }
+        if let Some(c2) = &worker_collector {
+            c2.note(&e, &mut c.referenced);
+        }
+        let merged_from = match (&filter, id_key(&e.id)) {
+            (Some(f), Some(k)) if f.is_target(k) => f.merged_from(k).iter().filter_map(|&k| id_from_key(k)).collect(),
+            _ => Vec::new(),
+        };
         let mut out = Vec::new();
         if json {
             out.reserve(line.len() / 4 + 256);
@@ -242,9 +281,17 @@ pub fn entities(
             entity: e,
             json: out,
             matched_by,
+            merged_from,
         }))
     });
     // The filter runs inside the work, sharing the parse when it can.
-    let r = scan(dump, &opts.scan, false, work, false, sink)?;
-    Ok(r.stats)
+    let r = scan_with(dump, &opts.scan, false, work, false, collector.clone(), sink)?;
+    let mut stats = r.stats;
+    if let (Some(collector), Some(pass), false) = (collector, r.labels, stats.stopped || stats.truncated) {
+        let threads = wikidata_dump::resolve_threads(opts.scan.threads);
+        let found = labels::finish(dump, threads, &collector, pass)?;
+        stats.labels = Some(found.stats);
+        stats.referenced_labels = Some(found);
+    }
+    Ok(stats)
 }

@@ -237,3 +237,181 @@ fn errors_and_pipes() {
     let o = child.wait_with_output().unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
 }
+
+fn fixture(name: &str) -> String {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures")
+        .join(name)
+        .to_str()
+        .unwrap()
+        .to_string()
+}
+
+#[test]
+fn places_and_in_country() {
+    let d = dir("places");
+    let index = d.join("places.wdp");
+    let classes = d.join("classes.wdc");
+    let p = fixture("places.json");
+    let (ok, _, err) = run(&[
+        "places",
+        &p,
+        "-o",
+        index.to_str().unwrap(),
+        "--build-classes",
+        classes.to_str().unwrap(),
+    ]);
+    assert!(ok, "{err}");
+    assert!(classes.exists());
+    let (ok, out, _) = run(&[
+        "places",
+        "--index",
+        index.to_str().unwrap(),
+        "--country-of",
+        "Q9003,Q9004",
+    ]);
+    assert!(ok);
+    assert_eq!(out, "Q9003\tQ55\nQ9004\tQ55,Q145\n");
+    let (ok, out, _) = run(&[
+        "cat",
+        &p,
+        "--in-country",
+        "Q145",
+        "--places",
+        index.to_str().unwrap(),
+        "-q",
+    ]);
+    assert!(ok);
+    assert_eq!(ids(&out), ["Q145", "Q9004", "Q9005"]);
+    let (ok, _, err) = run(&["cat", &p, "--in-country", "Q145", "-q"]);
+    assert!(!ok && err.contains("place index"), "{err}");
+}
+
+#[test]
+fn redirects_revisions_and_misses() {
+    let d = dir("redirects");
+    let index = d.join("redirects.wdr");
+    let (ok, _, err) = run(&[
+        "redirects",
+        "--redirect-sql",
+        &fixture("wikidatawiki-redirect.sql"),
+        "--page-sql",
+        &fixture("wikidatawiki-page.sql"),
+        "-o",
+        index.to_str().unwrap(),
+    ]);
+    assert!(ok, "{err}");
+    let (ok, out, _) = run(&[
+        "redirects",
+        "--index",
+        index.to_str().unwrap(),
+        "--resolve",
+        "Q1,Q9,Q42",
+    ]);
+    assert!(ok);
+    assert_eq!(out, "Q1\tQ42\nQ9\tQ42\nQ42\t\n");
+    // Known revisions: Q31 unchanged, Q55 changed; Q1 merged, Q3 deleted.
+    let revs = d.join("known.txt");
+    std::fs::write(&revs, "Q31 2000000001\nQ55 1\nQ1 1\nQ3 1\n").unwrap();
+    let s = sample();
+    let o = bin()
+        .args([
+            "cat",
+            s.to_str().unwrap(),
+            "--revisions-file",
+            revs.to_str().unwrap(),
+            "--redirects",
+            index.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(o.status.success());
+    assert_eq!(ids(&String::from_utf8(o.stdout).unwrap()), ["Q55", "Q42"]);
+    let stats: serde_json::Value =
+        serde_json::from_str(String::from_utf8(o.stderr).unwrap().lines().last().unwrap()).unwrap();
+    assert_eq!(stats["unchanged"], 1);
+    assert_eq!(stats["merged"][0]["to"], "Q42");
+    assert_eq!(stats["deleted"], serde_json::json!(["Q3"]));
+}
+
+#[test]
+fn checkpoints_resume_and_referenced_labels() {
+    let d = dir("checkpoint");
+    // A bzip2 dump of many blocks.
+    let lines: Vec<String> = std::fs::read_to_string(sample())
+        .unwrap()
+        .lines()
+        .filter(|l| l.starts_with('{'))
+        .map(|l| l.trim_end_matches(',').to_string())
+        .collect();
+    let mut text = String::from("[\n");
+    for i in 0..3000 {
+        text.push_str(&lines[i % lines.len()]);
+        text.push_str(if i + 1 < 3000 { ",\n" } else { "\n" });
+    }
+    text.push_str("]\n");
+    let mut e = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::new(1));
+    e.write_all(text.as_bytes()).unwrap();
+    let dump = d.join("big.json.bz2");
+    std::fs::write(&dump, e.finish().unwrap()).unwrap();
+    let dump = dump.to_str().unwrap();
+    let (ok, all, _) = run(&["cat", dump, "--claim", "P17=Q55", "--properties", "none", "-q"]);
+    assert!(ok);
+    let cp = d.join("pass.ckpt");
+    let (ok, part, err) = run(&[
+        "cat",
+        dump,
+        "--claim",
+        "P17=Q55",
+        "--properties",
+        "none",
+        "-q",
+        "--checkpoint",
+        cp.to_str().unwrap(),
+        "--checkpoint-every",
+        "3",
+        "--limit",
+        "200",
+    ]);
+    assert!(ok, "{err}");
+    assert!(cp.exists());
+    let (ok, rest, err) = run(&[
+        "cat",
+        dump,
+        "--claim",
+        "P17=Q55",
+        "--properties",
+        "none",
+        "-q",
+        "--resume",
+        cp.to_str().unwrap(),
+    ]);
+    assert!(ok, "{err}");
+    // The checkpoint lies within the first run's output: what was written
+    // before it, then the resumed rest, is the whole.
+    let all: Vec<&str> = all.lines().collect();
+    let rest: Vec<&str> = rest.lines().collect();
+    let done = all.len() - rest.len();
+    assert!(done > 0 && done <= part.lines().count());
+    assert_eq!(all[done..], rest[..]);
+    // Referenced labels.
+    let out = d.join("labels.json");
+    let (ok, _, err) = run(&[
+        "cat",
+        &fixture("places.json"),
+        "--id",
+        "Q9009",
+        "--properties",
+        "P131",
+        "--referenced-labels",
+        "nl",
+        "--labels-output",
+        out.to_str().unwrap(),
+        "-q",
+    ]);
+    assert!(ok, "{err}");
+    assert_eq!(
+        std::fs::read_to_string(out).unwrap(),
+        r#"{"Q9002":{"nl":"Schaesberg"}}"#
+    );
+}

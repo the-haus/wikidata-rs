@@ -77,6 +77,9 @@ pub(crate) struct EntityBatch {
     /// Named filters that matched (indices into `names`), CSR by entity.
     matched_by: Vec<u16>,
     matched_by_offsets: Vec<u32>,
+    /// Requested items merged into the entity (redirect index), CSR.
+    merged_from: Vec<u32>,
+    merged_from_offsets: Vec<u32>,
     pub(crate) names: Arc<[String]>,
 }
 
@@ -176,6 +179,7 @@ impl EntityBatch {
         }
         self.matched_by.extend_from_slice(&r.matched_by);
         self.matched_by_offsets.push(self.matched_by.len() as u32);
+        q_numbers(&r.merged_from, &mut self.merged_from, &mut self.merged_from_offsets);
         if self.json_offsets.is_empty() {
             self.json_offsets.push(0);
         }
@@ -226,6 +230,13 @@ impl EntityBatch {
             "externalOffsets",
             typed(env, &self.external_offsets, TypedArrayType::Uint32)?,
         )?;
+        if !self.merged_from.is_empty() {
+            o.set("mergedFrom", typed(env, &self.merged_from, TypedArrayType::Uint32)?)?;
+            o.set(
+                "mergedFromOffsets",
+                typed(env, &self.merged_from_offsets, TypedArrayType::Uint32)?,
+            )?;
+        }
         if !self.names.is_empty() {
             let mut names = env.create_array_with_length(self.names.len())?;
             for (i, n) in self.names.iter().enumerate() {

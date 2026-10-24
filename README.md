@@ -45,6 +45,13 @@ well-organised data:
   such as `instanceOf`, `country`, `coordinates`, `inception` and
   `externalIds`;
 - compact subsets (`.jsonl.zst`) that read back like the dump itself;
+- refreshes that touch only what changed: known revisions skip unchanged
+  items before parsing, merges and deletions come from the SQL dumps, a
+  stopped pass resumes from a checkpoint, and the labels of referenced
+  items come with the pass;
+- a place index that finds every item in a country through its P131 chain;
+- the daily incremental dumps and live changes, between weekly dumps;
+- several mirrors read at once, and verified, resumable downloads;
 - bounded memory, and a truncated input is always an error, never a silent
   end.
 
@@ -89,9 +96,13 @@ design.
 |---|---|
 | **Fast reading** | bzip2 is cut at its bit-aligned block boundaries and the blocks are decoded on every core by a decoder that is 1.9× faster than libbzip2, in file order. gzip and zstd decode on one thread, pipelined with everything else; plain JSON and JSON lines are read as they are. |
 | **Files or URLs** | A path, or an `http(s)://` URL that is streamed (no temporary file) and resumed with `Range` requests when the connection drops. |
-| **Filters before parsing** | `ids` (a compact id set; from Node, a typed array of item numbers), `type`, `hasProperty`, `claim` (`P17=Q55`), `instanceOf` (with subclasses, through a class index built in one pass, or as a by-product of any other pass), `sitelink`, combined with `all` / `any` / `not`. Named branches report which of them each entity matched, and an `ids` filter reports the ids the dump lacks. Lines are rejected from their first bytes and SIMD substring search; only possible matches are parsed. |
+| **Filters before parsing** | `ids` (a compact id set; from Node, a typed array of item numbers; with known revisions, unchanged entities are skipped), `type`, `hasProperty`, `claim` (`P17=Q55`), `instanceOf` (with subclasses, through a class index built in one pass, or as a by-product of any other pass), `inCountry` (P17, the P131 chain or P159, through a place index), `sitelink`, combined with `all` / `any` / `not`. Named branches report which of them each entity matched, and an `ids` filter reports the ids the dump lacks: merged (with a redirect index from the SQL dumps), deleted or newer. Lines are rejected from their first bytes and SIMD substring search; only possible matches are parsed. |
 | **Organised output** | A stable JSON shape with typed values, language fallback, sitelink URLs, rank handling and derived fields, computed in Rust. |
 | **Subsets** | `extract` writes the matching entities' original lines as `.jsonl.zst` (recommended), `.json.bz2` (Wikimedia's own layout), `.json.gz`, … compressed on every core, readable by this package and by every common tool. |
+| **Resumable** | Checkpoints every N bzip2 blocks; a pass resumes from one with exactly the records after it (counters and missing ids carried over). |
+| **Between weekly dumps** | The daily incremental XML dumps read like a dump (each entity at its newest revision, merges reported); live changes from EventStreams, resumable from an event id. |
+| **Referenced labels** | The labels of the items the matches refer to (genres, places, operators), collected during the pass, and afterwards from only the blocks that hold the rest. |
+| **Mirrors and downloads** | A URL is read in ranges from several mirrors at once (each caps bandwidth per client); `download` keeps a local copy: newest complete dump, segmented across mirrors into one preallocated file, resumable, SHA-1 verified, renamed into place when done. |
 | **Streaming by design** | Every stage runs in parallel or pipelined; a slow consumer slows the reader instead of filling memory (credit-based flow control into Node.js). |
 
 ## Installation
@@ -104,7 +115,7 @@ Windows (x64) are attached to every
 SHA-256 checksums:
 
 ```sh
-VERSION=0.2.1
+VERSION=0.3.0
 TARGET=aarch64-apple-darwin   # or x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu,
                               #    x86_64-apple-darwin, x86_64-pc-windows-msvc (.zip)
 curl -fsSL "https://github.com/the-haus/wikidata-rs/releases/download/v$VERSION/wikidata-$VERSION-$TARGET.tar.gz" | tar xz
@@ -114,7 +125,7 @@ curl -fsSL "https://github.com/the-haus/wikidata-rs/releases/download/v$VERSION/
 To build the CLI with Cargo instead:
 
 ```sh
-cargo install --git https://github.com/the-haus/wikidata-rs --tag v0.2.1 wikidata-cli
+cargo install --git https://github.com/the-haus/wikidata-rs --tag v0.3.0 wikidata-cli
 ```
 
 ### Node.js
@@ -135,11 +146,11 @@ The crates are not on crates.io yet; depend on them from Git:
 ```toml
 [dependencies]
 # filters, entities, extracts, class index, file statistics
-wikidata-export = { git = "https://github.com/the-haus/wikidata-rs", tag = "v0.2.1" }
+wikidata-export = { git = "https://github.com/the-haus/wikidata-rs", tag = "v0.3.0" }
 # just the dump reader (parallel bzip2, HTTP, line chunks)
-wikidata-dump = { git = "https://github.com/the-haus/wikidata-rs", tag = "v0.2.1" }
+wikidata-dump = { git = "https://github.com/the-haus/wikidata-rs", tag = "v0.3.0" }
 # just the entity model and parser
-wikidata-model = { git = "https://github.com/the-haus/wikidata-rs", tag = "v0.2.1" }
+wikidata-model = { git = "https://github.com/the-haus/wikidata-rs", tag = "v0.3.0" }
 ```
 
 ## Quick start
@@ -163,6 +174,26 @@ wikidata cat subset.jsonl.zst --id Q42
 wikidata classes $DUMP -o classes.wdc                                  # one pass; ~20 MB file
 wikidata extract $DUMP --has P434 -o artists.jsonl.zst --build-classes classes.wdc  # or during another pass
 wikidata cat subset.jsonl.zst --instance-of Q868557 --subclasses --classes classes.wdc
+
+# Everything in the Netherlands, also what names only a village in P131
+wikidata places $DUMP -o places.wdp --build-classes classes.wdc        # both indexes, one pass
+wikidata cat $DUMP --in-country Q55 --places places.wdp > nl.jsonl
+
+# Merges and deletions: the redirects of the SQL dumps of the same date
+SQL=https://dumps.wikimedia.org/wikidatawiki/20261020/wikidatawiki-20261020
+wikidata redirects --redirect-sql $SQL-redirect.sql.gz --page-sql $SQL-page.sql.gz -o redirects.wdr
+wikidata cat $DUMP --revisions-file known.txt --redirects redirects.wdr > changed.jsonl  # stats: merged, deleted, newer
+
+# A resumable pass, and the labels of the items the matches refer to
+wikidata cat $DUMP --claim P17=Q55 --checkpoint pass.ckpt --referenced-labels en,nl --labels-output labels.json > nl.jsonl
+wikidata cat $DUMP --claim P17=Q55 --resume pass.ckpt >> nl.jsonl        # after a stop: the rest
+
+# Between weekly dumps: a day's incremental dump, and live changes
+wikidata cat https://dumps.wikimedia.org/other/incr/wikidatawiki/20261022/wikidatawiki-20261022-pages-meta-hist-incr.xml.bz2 --revisions-file known.txt
+wikidata live --id Q42,Q55 --last-event-id "$(tail -1 changes.jsonl | jq -r .eventId)" >> changes.jsonl
+
+# A local copy: newest complete dump, from two servers, verified, resumable
+wikidata download --dir /data/dumps --mirror https://dumps.wikimedia.your.org/wikidatawiki/entities/
 ```
 
 Run `wikidata --help`, or `wikidata <command> --help`, for every option.
@@ -170,7 +201,7 @@ Run `wikidata --help`, or `wikidata <command> --help`, for every option.
 ### Node.js
 
 ```ts
-import { openDump } from "@wikidata-rs/node";
+import { openDump, RedirectIndex } from "@wikidata-rs/node";
 
 const dump = await openDump("https://dumps.wikimedia.org/wikidatawiki/entities/latest-all.json.bz2");
 for await (const e of dump.entities({ filter: { claim: "P17=Q55" }, languages: ["nl", "en", "mul"] })) {
@@ -181,6 +212,18 @@ for await (const e of dump.entities({ filter: { claim: "P17=Q55" }, languages: [
 }
 
 await dump.extract({ output: "nl.jsonl.zst", filter: { claim: "P17=Q55" } });
+
+// A weekly refresh: only what changed, merges followed, resumable.
+const redirects = await RedirectIndex.load("redirects.wdr");
+const stream = dump.entities({
+  filter: { ids: knownItems, revisions: knownRevisions },
+  redirects,
+  checkpointEvery: 1000,
+  onCheckpoint: (cp) => save(cp),
+  referencedLabels: { languages: ["en", "nl"] },
+});
+for await (const e of stream) update(e, e.mergedFrom);
+const { unchanged, merged, deleted, newer, referencedLabels } = await stream.stats;
 ```
 
 The [Node.js guide](crates/bindings/wikidata-node) covers every option, and
@@ -347,9 +390,13 @@ cargo clippy --workspace --all-targets -- -D warnings
 node scripts/check-version.mjs
 ```
 
-The release profile uses fat LTO and one codegen unit. For a binary tuned
-to the machine that builds it, add `RUSTFLAGS="-C target-cpu=native"`
-(the published binaries are portable and do not).
+The release profile uses fat LTO and one codegen unit, and
+[`.cargo/config.toml`](.cargo/config.toml) aligns loops to 64 bytes (the
+bzip2 decoder's speed otherwise depends on where unrelated code puts its
+loops). For a binary tuned to the machine that builds it, add
+`RUSTFLAGS="-C target-cpu=native -C llvm-args=-align-loops=64"` (a
+`RUSTFLAGS` variable replaces the config's flags; the published binaries
+are portable and do not use `target-cpu`).
 
 ## Limitations
 
@@ -362,8 +409,13 @@ to the machine that builds it, add `RUSTFLAGS="-C target-cpu=native"`
 - **`references`** are kept as snaks per reference; their hashes and
   `snaks-order` are not.
 - **Statement ids** (GUIDs) and qualifier order are not kept.
-- **Wikidata's JSON quirks** that are not in the dumps (the API's
-  `missing` entities, `redirects`) are not handled.
+- **Redirects** are not in the JSON dumps; they come from the SQL dumps
+  (`wikidata redirects`), or, for a day, from an incremental dump. The
+  API's `missing` entities are not handled.
+- **Checkpoints** exist for bzip2 and plain JSON inputs (gzip and zstd
+  cannot be resumed from the middle), and not for incremental (XML) dumps.
+- **Live changes** have no read timeout: a connection that stalls without
+  closing is noticed only when the stream is closed.
 
 See [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) for everything about
 the dump format.

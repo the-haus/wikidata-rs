@@ -7,12 +7,42 @@
 export declare function loadClassIndex(path: string): Promise<NativeClassIndex>
 /** Take the index a finished `buildClassIndex` task left under `token`. */
 export declare function takeClassIndex(token: number): NativeClassIndex
+/** Load a place index file. */
+export declare function loadPlaceIndex(path: string): Promise<NativePlaceIndex>
+/** Take the place index a finished build left under `token`. */
+export declare function takePlaceIndex(token: number): NativePlaceIndex
+/** Load a redirect index file. */
+export declare function loadRedirectIndex(path: string): Promise<NativeRedirectIndex>
+/** Take the redirect index a finished build left under `token`. */
+export declare function takeRedirectIndex(token: number): NativeRedirectIndex
 /** Options shared by every task. See the TypeScript docs. */
 export interface NativeOptions {
   /** A filter, as JSON; `"ids": {"$items": k}` stands for `idArrays[k]`. */
   filterJson?: string
   /** Item numbers of `ids` filters given as typed arrays. */
   idArrays?: Array<Uint32Array>
+  /**
+   * Known revisions of `ids` filters; `"revisions": {"$revisions": k}`
+   * stands for `revisionArrays[k]`.
+   */
+  revisionArrays?: Array<Float64Array>
+  /**
+   * A place index (its registry id) for `inCountry` and the language
+   * rules.
+   */
+  placeIndex?: number
+  /** A redirect index (its registry id): `ids` follow merges. */
+  redirectIndex?: number
+  /** Build the place index during the task and save it here. */
+  placeIndexOutput?: string
+  /** Send a checkpoint after every this many chunks. */
+  checkpointEvery?: number
+  /** Continue from a checkpoint's data. */
+  resume?: Buffer
+  /** Labels of referenced items, as JSON (`{languages, output?}`). */
+  referencedLabelsJson?: string
+  /** Keep only these qualifiers. */
+  qualifierProperties?: Array<string>
   /** A class index (its registry id) for `instanceOf` with subclasses. */
   classIndex?: number
   /** Worker threads (default: all cores). */
@@ -64,9 +94,73 @@ export interface NativeOpenOptions {
   userAgent?: string
   /** HTTP reconnect attempts. */
   retries?: number
+  /** Other URLs of the same file, read in ranges at once. */
+  mirrors?: Array<string>
+  /** Connections per server when reading in ranges. */
+  connections?: number
+  /** Range size in bytes. */
+  rangeSize?: number
 }
 /** Open a dump: a path or an http(s) URL. */
 export declare function open(input: string, options?: NativeOpenOptions | undefined | null): Promise<NativeReader>
+/** Options for `buildRedirectIndex`. */
+export interface NativeRedirectOptions {
+  /** The `redirect` table's SQL dump (path or URL). */
+  redirects: string
+  /** The `page` table's SQL dump (path or URL). */
+  pages: string
+  /** Worker threads. */
+  threads?: number
+  /** HTTP options. */
+  open?: NativeOpenOptions
+}
+/**
+ * Build a redirect index from the SQL dumps; the end event's stats carry
+ * a `token` for `takeRedirectIndex`.
+ */
+export declare function buildRedirects(options: NativeRedirectOptions, callback: (event: unknown) => void): NativeStream
+/** Options for `liveChanges`. */
+export interface NativeLiveOptions {
+  /** Only these items (numbers). */
+  items?: Uint32Array
+  /** Only these entities (any kind). */
+  ids?: Array<string>
+  /** Resume after this event id. */
+  lastEventId?: string
+  /** Start at this time. */
+  since?: string
+  /** Namespaces (default `[0]`). */
+  namespaces?: Array<number>
+  /** The wiki (default `wikidatawiki`). */
+  wiki?: string
+  /** The stream's URL. */
+  url?: string
+  /** Batches buffered ahead of the consumer. */
+  readAhead?: number
+  /** HTTP options. */
+  open?: NativeOpenOptions
+}
+/** Stream live changes; batches are JSON arrays of changes. */
+export declare function live(options: NativeLiveOptions, callback: (event: unknown) => void): NativeStream
+/** Options for `downloadDump`. */
+export interface NativeDownloadOptions {
+  /** The dumps' directory. */
+  base?: string
+  /** Mirrors of it. */
+  mirrors?: Array<string>
+  /** The date (default: the newest complete dump). */
+  date?: string
+  /** The file of the dump (default `all.json.bz2`). */
+  file?: string
+  /** Where to put it. */
+  dir: string
+  /** Check the SHA-1 (default true). */
+  verify?: boolean
+  /** HTTP options (connections per server, range size, …). */
+  open?: NativeOpenOptions
+}
+/** Download a dump; status events carry its progress. */
+export declare function downloadDump(options: NativeDownloadOptions, callback: (event: unknown) => void): NativeStream
 /** The library version. */
 export declare function version(): string
 /** Worker threads still running (for tests: 0 once every task ended). */
@@ -89,6 +183,43 @@ export declare class NativeClassIndex {
   subclassesOf(ids: Array<string>): Array<string>
   /** Whether `id` is `ancestor` or a subclass of it. */
   isSubclassOf(id: string, ancestor: string): boolean
+  /** Write to a file. */
+  save(path: string): void
+}
+/** A place index (see `wikidata_filter::PlaceIndex`). */
+export declare class NativePlaceIndex {
+  /** The registry id, for task options. */
+  get id(): number
+  /** Items with a country. */
+  get size(): number
+  /** Distinct sets of countries. */
+  get sets(): number
+  /** Bytes in memory. */
+  get heapBytes(): number
+  /** The dump it was built from. */
+  get source(): string
+  /** The countries of an item. */
+  countryOf(id: string): Array<string>
+  /** The countries of many items at once (item numbers): CSR arrays. */
+  countriesOf(items: Uint32Array): { offsets: Uint32Array, countries: Uint32Array }
+  /** Write to a file. */
+  save(path: string): void
+}
+/** A redirect index (see `wikidata_filter::RedirectIndex`). */
+export declare class NativeRedirectIndex {
+  /** The registry id, for task options. */
+  get id(): number
+  /** Redirects. */
+  get size(): number
+  /** The SQL dumps it was built from. */
+  get source(): string
+  /**
+   * Where an item ends up, following redirects; `null` when it is not
+   * a redirect.
+   */
+  resolve(id: string): string | null
+  /** Every redirect: `from` and `to` item numbers. */
+  pairs(): { from: Uint32Array, to: Uint32Array }
   /** Write to a file. */
   save(path: string): void
 }
@@ -124,6 +255,12 @@ export declare class NativeReader {
   extract(options: NativeOptions, callback: (event: unknown) => void): NativeStream
   /** Count what the dump holds; ends with the info as its stats. */
   fileInfo(options: NativeOptions, callback: (event: unknown) => void): NativeStream
+  /**
+   * Build the place index; the end event's stats carry a `token` for
+   * `takePlaceIndex` (with `classIndexOutput`, the class index is built
+   * and saved in the same pass).
+   */
+  buildPlaceIndex(options: NativeOptions, callback: (event: unknown) => void): NativeStream
   /**
    * Build the class index; the end event's stats carry a `token` for
    * `takeClassIndex`.

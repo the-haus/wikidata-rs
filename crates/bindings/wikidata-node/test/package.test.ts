@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -63,6 +64,15 @@ describe("package", () => {
     writeFileSync(join(src, "where.mjs"), `console.log(import.meta.resolve("@wikidata-rs/node"));`);
     expect(run(join(src, "native-esm.mjs"))).toBe(WANT);
     expect(run(join(src, "where.mjs"))).toMatch(/dist\/esm\/index\.js$/);
+  });
+
+  it("has every native function in the ESM loader too", async () => {
+    // The ESM loader names its exports; a function missing there works in
+    // CommonJS and fails in ESM.
+    const cjs = createRequire(import.meta.url)(join(pkg, "dist", "native.js")) as Record<string, unknown>;
+    const esm = (await import(pathToFileURL(join(pkg, "dist", "esm", "native.js")).href)) as Record<string, unknown>;
+    const functions = Object.keys(cjs).filter((k) => typeof cjs[k] === "function" && !/^[A-Z]/.test(k));
+    expect(functions.filter((k) => typeof esm[k] !== "function")).toEqual([]);
   });
 
   it("bundles with esbuild, as ESM and as CommonJS", async () => {

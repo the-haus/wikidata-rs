@@ -49,6 +49,23 @@ pub fn id_number(id: &str) -> Option<u64> {
     d.parse().ok()
 }
 
+/// An entity line's `lastrevid`, without parsing it. The dumps write it
+/// near the end of the line (`…,"title":"Q31","lastrevid":2553637656,
+/// "modified":"…"}`), so the tail is searched first, then the whole line.
+pub fn lastrevid(line: &[u8]) -> Option<u64> {
+    const KEY: &[u8] = b"\"lastrevid\":";
+    let tail = line.len().saturating_sub(HEAD);
+    let at = memmem::rfind(&line[tail..], KEY)
+        .map(|i| i + tail)
+        .or_else(|| memmem::rfind(&line[..tail.saturating_add(KEY.len()).min(line.len())], KEY))?;
+    let digits = &line[at + KEY.len()..];
+    let n = digits.iter().take_while(|b| b.is_ascii_digit()).count();
+    if n == 0 || n > 19 {
+        return None;
+    }
+    std::str::from_utf8(&digits[..n]).ok()?.parse().ok()
+}
+
 /// The type and id of an entity line (see the module docs).
 pub fn peek(line: &[u8]) -> Option<Peek<'_>> {
     if let (Some(t), Some(id)) = (head_value(line, b"\"type\":\""), head_value(line, b"\"id\":\"")) {
@@ -148,5 +165,21 @@ mod tests {
         assert!(peek(b"{\"labels\":{}}").is_none());
         assert_eq!(id_number("Q31"), Some(31));
         assert_eq!(id_number("Q"), None);
+    }
+
+    #[test]
+    fn revisions() {
+        assert_eq!(
+            lastrevid(br#"{"type":"item","id":"Q1","lastrevid":2553637656,"modified":"x"}"#),
+            Some(2553637656)
+        );
+        // Far from the end (the whole line is searched).
+        let mut long = br#"{"type":"item","lastrevid":7,"id":"Q1","labels":""#.to_vec();
+        long.extend(std::iter::repeat_n(b'x', 2000));
+        long.extend(br#""}"#);
+        assert_eq!(lastrevid(&long), Some(7));
+        assert_eq!(lastrevid(br#"{"type":"item","id":"Q1"}"#), None);
+        // Inside a string, the quotes are escaped: no match.
+        assert_eq!(lastrevid(br#"{"a":"\"lastrevid\":5"}"#), None);
     }
 }

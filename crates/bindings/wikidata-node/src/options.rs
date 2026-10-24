@@ -4,14 +4,17 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use napi::bindgen_prelude::Uint32Array;
+use napi::bindgen_prelude::{Buffer, Float64Array, Uint32Array};
 use napi::{Error, Result, Status};
 use napi_derive::napi;
 use serde::Deserialize;
-use wikidata_export::{ByClaim, CompiledFilter, Filter, ModelOptions, ScanOptions};
+use wikidata_export::{
+    ByClaim, Checkpoint, CompiledFilter, Filter, Indexes, LabelOptions, ModelOptions, PlaceIndex, ScanOptions,
+};
 use wikidata_model::Pid;
 
 use crate::class_index::lookup;
+use crate::indexes::{places, redirects};
 
 /// Options shared by every task. See the TypeScript docs.
 #[napi(object)]
@@ -21,6 +24,24 @@ pub struct NativeOptions {
     pub filter_json: Option<String>,
     /// Item numbers of `ids` filters given as typed arrays.
     pub id_arrays: Option<Vec<Uint32Array>>,
+    /// Known revisions of `ids` filters; `"revisions": {"$revisions": k}`
+    /// stands for `revisionArrays[k]`.
+    pub revision_arrays: Option<Vec<Float64Array>>,
+    /// A place index (its registry id) for `inCountry` and the language
+    /// rules.
+    pub place_index: Option<u32>,
+    /// A redirect index (its registry id): `ids` follow merges.
+    pub redirect_index: Option<u32>,
+    /// Build the place index during the task and save it here.
+    pub place_index_output: Option<String>,
+    /// Send a checkpoint after every this many chunks.
+    pub checkpoint_every: Option<u32>,
+    /// Continue from a checkpoint's data.
+    pub resume: Option<Buffer>,
+    /// Labels of referenced items, as JSON (`{languages, output?}`).
+    pub referenced_labels_json: Option<String>,
+    /// Keep only these qualifiers.
+    pub qualifier_properties: Option<Vec<String>>,
     /// A class index (its registry id) for `instanceOf` with subclasses.
     pub class_index: Option<u32>,
     /// Worker threads (default: all cores).
@@ -71,16 +92,77 @@ pub(crate) fn invalid(msg: impl Into<String>) -> Error {
     Error::new(Status::InvalidArg, msg.into())
 }
 
+/// The place index the options name.
+pub(crate) fn place_index(o: &NativeOptions) -> Result<Option<Arc<PlaceIndex>>> {
+    match o.place_index {
+        Some(id) => Ok(Some(
+            places()
+                .lookup(id)
+                .ok_or_else(|| invalid("the place index was released"))?,
+        )),
+        None => Ok(None),
+    }
+}
+
 pub(crate) fn filter(o: &NativeOptions) -> Result<Option<Arc<CompiledFilter>>> {
     let Some(json) = &o.filter_json else { return Ok(None) };
     let items: Vec<&[u32]> = o.id_arrays.iter().flatten().map(|a| &a[..]).collect();
-    let f = Filter::parse_json_with(json, &items).map_err(|e| invalid(e.to_string()))?;
+    let revisions: Vec<Vec<u64>> = o
+        .revision_arrays
+        .iter()
+        .flatten()
+        .map(|a| {
+            a.iter()
+                .map(|&r| {
+                    (r.is_finite() && r >= 0.0 && r.fract() == 0.0)
+                        .then_some(r as u64)
+                        .ok_or_else(|| invalid(format!("revisions: not a revision id: {r}")))
+                })
+                .collect::<Result<Vec<u64>>>()
+        })
+        .collect::<Result<_>>()?;
+    let revisions: Vec<&[u64]> = revisions.iter().map(Vec::as_slice).collect();
+    let f = Filter::parse_json_with_revisions(json, &items, &revisions).map_err(|e| invalid(e.to_string()))?;
     let index = match o.class_index {
         Some(id) => Some(lookup(id).ok_or_else(|| invalid("the class index was released"))?),
         None => None,
     };
-    let c = f.compile(index.as_deref()).map_err(|e| invalid(e.to_string()))?;
+    let redirects = match o.redirect_index {
+        Some(id) => Some(
+            redirects()
+                .lookup(id)
+                .ok_or_else(|| invalid("the redirect index was released"))?,
+        ),
+        None => None,
+    };
+    let indexes = Indexes {
+        classes: index.as_deref(),
+        places: place_index(o)?,
+        redirects,
+    };
+    let c = f.compile_with(&indexes).map_err(|e| invalid(e.to_string()))?;
     Ok(Some(Arc::new(c)))
+}
+
+/// `{languages: [...], output?: "…"}`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LabelsJson {
+    pub languages: Vec<String>,
+    #[serde(default)]
+    pub output: Option<String>,
+}
+
+pub(crate) fn referenced_labels(o: &NativeOptions) -> Result<Option<(LabelOptions, Option<String>)>> {
+    let Some(json) = &o.referenced_labels_json else {
+        return Ok(None);
+    };
+    let r: LabelsJson = serde_json::from_str(json)
+        .map_err(|e| invalid(format!("referencedLabels: expected {{ languages, output? }}: {e}")))?;
+    if r.languages.is_empty() {
+        return Err(invalid("referencedLabels.languages: name at least one language"));
+    }
+    Ok(Some((LabelOptions { languages: r.languages }, r.output)))
 }
 
 pub(crate) fn scan(o: &NativeOptions) -> Result<ScanOptions> {
@@ -89,12 +171,21 @@ pub(crate) fn scan(o: &NativeOptions) -> Result<ScanOptions> {
         Some(_) => return Err(invalid("limit must be a non-negative number")),
         None => None,
     };
+    let resume = match &o.resume {
+        Some(b) => Some(Arc::new(
+            Checkpoint::from_bytes(b).map_err(|e| invalid(format!("resumeFrom: {e}")))?,
+        )),
+        None => None,
+    };
     Ok(ScanOptions {
         filter: filter(o)?,
         threads: o.threads.unwrap_or(0) as usize,
         limit,
         allow_truncated: o.allow_truncated.unwrap_or(false),
         class_index: o.class_index_output.as_ref().map(PathBuf::from),
+        place_index: o.place_index_output.as_ref().map(PathBuf::from),
+        checkpoint_every: o.checkpoint_every.filter(|&n| n > 0).map(u64::from),
+        resume,
     })
 }
 
@@ -115,7 +206,7 @@ enum OneOrMany {
     Many(Vec<String>),
 }
 
-pub(crate) fn by_claim(json: &Option<String>, what: &str) -> Result<Option<ByClaim>> {
+pub(crate) fn by_claim(json: &Option<String>, what: &str, places: Option<Arc<PlaceIndex>>) -> Result<Option<ByClaim>> {
     let Some(json) = json else { return Ok(None) };
     let r: ByClaimJson =
         serde_json::from_str(json).map_err(|e| invalid(format!("{what}: expected {{ by, map, always }}: {e}")))?;
@@ -131,6 +222,7 @@ pub(crate) fn by_claim(json: &Option<String>, what: &str) -> Result<Option<ByCla
         properties,
         map: r.map,
         always: r.always,
+        places,
     }))
 }
 
@@ -143,8 +235,17 @@ pub(crate) fn model(o: &NativeOptions) -> Result<ModelOptions> {
                 .collect::<Result<_>>()?,
         ),
     };
+    let qualifier_properties = match &o.qualifier_properties {
+        None => None,
+        Some(ps) => Some(
+            ps.iter()
+                .map(|p| Pid::parse(p).ok_or_else(|| invalid(format!("qualifiers: not a property id: {p:?}"))))
+                .collect::<Result<_>>()?,
+        ),
+    };
     Ok(ModelOptions {
         languages: o.languages.clone(),
+        qualifier_properties,
         sitelinks: o.sitelinks.clone(),
         properties,
         labels: o.labels.unwrap_or(true),

@@ -18,4 +18,5 @@ ureq.workspace = true
 memchr.workspace = true
 crc32fast.workspace = true
 crossbeam-channel.workspace = true
+sha1.workspace = true
 thiserror.workspace = true

@@ -458,6 +458,7 @@ fn last_progress_has_the_final_totals() {
                         Flow::Continue
                     }
                 }
+                wikidata_export::Event::Checkpoint(_) => Flow::Continue,
             })
             .unwrap();
             let last = last.expect("a progress event");
@@ -472,4 +473,34 @@ fn last_progress_has_the_final_totals() {
             }
         }
     }
+}
+
+#[test]
+fn qualifiers_by_property() {
+    let dump = Dump::open(sample_path()).unwrap();
+    let mut opts = EntityOptions::default();
+    opts.scan.filter = Some(
+        Filter::parse_json(r#"{"ids":"Q31"}"#)
+            .unwrap()
+            .compile(None)
+            .unwrap()
+            .into(),
+    );
+    let (rs, _) = collect(&dump, &opts);
+    let all = &by_id(&rs, "Q31").statements(Pid(1082))[0].qualifiers;
+    assert_eq!(all.iter().map(|(p, _)| p.0).collect::<Vec<_>>(), [585, 459]);
+
+    opts.model.qualifier_properties = Some(vec![Pid(585)]);
+    let (rs, _) = collect(&dump, &opts);
+    let be = by_id(&rs, "Q31");
+    let kept = &be.statements(Pid(1082))[0].qualifiers;
+    assert_eq!(kept.iter().map(|(p, _)| p.0).collect::<Vec<_>>(), [585]);
+    match &kept.get(&Pid(585)).unwrap()[0] {
+        Value::Time(t) => assert_eq!(t.iso, "2023-01-01"),
+        v => panic!("{v:?}"),
+    }
+    // References are not qualifiers: they are kept as asked.
+    opts.model.references = true;
+    let (rs, _) = collect(&dump, &opts);
+    assert_eq!(by_id(&rs, "Q31").statements(Pid(1082))[0].references[0].len(), 2);
 }

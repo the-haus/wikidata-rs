@@ -141,6 +141,12 @@ class LazyRecord implements EntityRecord {
     return out;
   }
 
+  get mergedFrom(): string[] {
+    const b = this.#batch.b;
+    if (!b.mergedFrom || !b.mergedFromOffsets) return [];
+    return qids(b.mergedFrom, b.mergedFromOffsets, this.#i);
+  }
+
   get json(): string {
     const b = this.#batch.b;
     return b.json.slice(b.jsonOffsets[this.#i]!, b.jsonOffsets[this.#i + 1]!);
@@ -173,6 +179,7 @@ class LazyRecord implements EntityRecord {
       website: this.website,
       externalIds: this.externalIds,
       matchedBy: this.matchedBy,
+      mergedFrom: this.mergedFrom,
     };
   }
 

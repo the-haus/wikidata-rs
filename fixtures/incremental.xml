@@ -1,0 +1,162 @@
+<mediawiki xmlns="http://www.mediawiki.org/xml/export-0.11/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mediawiki.org/xml/export-0.11/ http://www.mediawiki.org/xml/export-0.11.xsd" version="0.11" xml:lang="en">
+  <siteinfo>
+    <sitename>Wikidata</sitename>
+    <dbname>wikidatawiki</dbname>
+  </siteinfo>
+  <page>
+    <title>Q7</title>
+    <ns>0</ns>
+    <id>9000007</id>
+    <redirect title="Q55" />
+    <revision>
+      <id>2200000001</id>
+      <parentid>2200000000</parentid>
+      <timestamp>2026-10-22T10:01:00Z</timestamp>
+      <contributor>
+        <username>Example</username>
+        <id>42</id>
+      </contributor>
+      <comment>/* wbsetlabel-set:1|en */ example &lt;edit&gt;</comment>
+      <origin>2200000001</origin>
+      <model>wikibase-item</model>
+      <format>application/json</format>
+      <text bytes="32" sha1="0000000000000000000000000000000" xml:space="preserve">{&quot;entity&quot;:&quot;Q7&quot;,&quot;redirect&quot;:&quot;Q55&quot;}</text>
+      <sha1>0000000000000000000000000000000</sha1>
+    </revision>
+  </page>
+  <page>
+    <title>Q42</title>
+    <ns>0</ns>
+    <id>142</id>
+    <revision>
+      <id>2200000002</id>
+      <parentid>2200000001</parentid>
+      <timestamp>2026-10-22T10:02:00Z</timestamp>
+      <contributor>
+        <username>Example</username>
+        <id>42</id>
+      </contributor>
+      <comment>/* wbsetlabel-set:1|en */ example &lt;edit&gt;</comment>
+      <origin>2200000002</origin>
+      <model>wikibase-item</model>
+      <format>application/json</format>
+      <text bytes="3973" sha1="0000000000000000000000000000000" xml:space="preserve">{&quot;type&quot;:&quot;item&quot;,&quot;id&quot;:&quot;Q42&quot;,&quot;labels&quot;:{&quot;en&quot;:{&quot;language&quot;:&quot;en&quot;,&quot;value&quot;:&quot;Douglas Adams (first edit)&quot;},&quot;nl&quot;:{&quot;language&quot;:&quot;nl&quot;,&quot;value&quot;:&quot;Douglas Adams&quot;},&quot;ja&quot;:{&quot;language&quot;:&quot;ja&quot;,&quot;value&quot;:&quot;\u30c0\u30b0\u30e9\u30b9\u30fb\u30a2\u30c0\u30e0\u30ba&quot;},&quot;ru&quot;:{&quot;language&quot;:&quot;ru&quot;,&quot;value&quot;:&quot;\u0414\u0443\u0433\u043b\u0430\u0441 \u0410\u0434\u0430\u043c\u0441&quot;}},&quot;descriptions&quot;:{&quot;en&quot;:{&quot;language&quot;:&quot;en&quot;,&quot;value&quot;:&quot;English writer and humourist (1952\u20132001)&quot;}},&quot;aliases&quot;:{&quot;en&quot;:[{&quot;language&quot;:&quot;en&quot;,&quot;value&quot;:&quot;Douglas No\u00ebl Adams&quot;},{&quot;language&quot;:&quot;en&quot;,&quot;value&quot;:&quot;DNA \ud83d\ude00&quot;}]},&quot;claims&quot;:{&quot;P31&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P31&quot;,&quot;datavalue&quot;:{&quot;value&quot;:{&quot;entity-type&quot;:&quot;item&quot;,&quot;numeric-id&quot;:5,&quot;id&quot;:&quot;Q5&quot;},&quot;type&quot;:&quot;wikibase-entityid&quot;},&quot;datatype&quot;:&quot;wikibase-item&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P31$0000001a-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P27&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P27&quot;,&quot;datavalue&quot;:{&quot;value&quot;:{&quot;entity-type&quot;:&quot;item&quot;,&quot;numeric-id&quot;:145,&quot;id&quot;:&quot;Q145&quot;},&quot;type&quot;:&quot;wikibase-entityid&quot;},&quot;datatype&quot;:&quot;wikibase-item&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P27$0000001b-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P569&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P569&quot;,&quot;datavalue&quot;:{&quot;value&quot;:{&quot;time&quot;:&quot;+1952-03-11T00:00:00Z&quot;,&quot;timezone&quot;:0,&quot;before&quot;:0,&quot;after&quot;:0,&quot;precision&quot;:11,&quot;calendarmodel&quot;:&quot;http:\/\/www.wikidata.org\/entity\/Q1985727&quot;},&quot;type&quot;:&quot;time&quot;},&quot;datatype&quot;:&quot;time&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P569$0000001c-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P570&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P570&quot;,&quot;datavalue&quot;:{&quot;value&quot;:{&quot;time&quot;:&quot;+2001-05-11T00:00:00Z&quot;,&quot;timezone&quot;:0,&quot;before&quot;:0,&quot;after&quot;:0,&quot;precision&quot;:11,&quot;calendarmodel&quot;:&quot;http:\/\/www.wikidata.org\/entity\/Q1985727&quot;},&quot;type&quot;:&quot;time&quot;},&quot;datatype&quot;:&quot;time&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P570$0000001d-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P434&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P434&quot;,&quot;datavalue&quot;:{&quot;value&quot;:&quot;e9ed318d-8cc5-4cf8-ab77-505e39ab6ea4&quot;,&quot;type&quot;:&quot;string&quot;},&quot;datatype&quot;:&quot;external-id&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P434$0000001e-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P214&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P214&quot;,&quot;datavalue&quot;:{&quot;value&quot;:&quot;113230702&quot;,&quot;type&quot;:&quot;string&quot;},&quot;datatype&quot;:&quot;external-id&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P214$0000001f-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P213&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P213&quot;,&quot;datavalue&quot;:{&quot;value&quot;:&quot;0000 0000 8045 6315&quot;,&quot;type&quot;:&quot;string&quot;},&quot;datatype&quot;:&quot;external-id&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P213$00000020-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P1953&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P1953&quot;,&quot;datavalue&quot;:{&quot;value&quot;:&quot;66941&quot;,&quot;type&quot;:&quot;string&quot;},&quot;datatype&quot;:&quot;external-id&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P1953$00000021-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P2048&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P2048&quot;,&quot;datavalue&quot;:{&quot;value&quot;:{&quot;amount&quot;:&quot;+1.96&quot;,&quot;unit&quot;:&quot;http:\/\/www.wikidata.org\/entity\/Q11573&quot;,&quot;upperBound&quot;:&quot;+1.97&quot;,&quot;lowerBound&quot;:&quot;+1.95&quot;},&quot;type&quot;:&quot;quantity&quot;},&quot;datatype&quot;:&quot;quantity&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P2048$00000022-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P40&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;somevalue&quot;,&quot;property&quot;:&quot;P40&quot;,&quot;datatype&quot;:&quot;wikibase-item&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P40$00000023-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P26&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;novalue&quot;,&quot;property&quot;:&quot;P26&quot;,&quot;datatype&quot;:&quot;wikibase-item&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P26$00000024-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P18&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P18&quot;,&quot;datavalue&quot;:{&quot;value&quot;:&quot;Douglas adams portrait cropped.jpg&quot;,&quot;type&quot;:&quot;string&quot;},&quot;datatype&quot;:&quot;commonsMedia&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P18$00000025-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;deprecated&quot;}],&quot;P2002&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P2002&quot;,&quot;datavalue&quot;:{&quot;value&quot;:&quot;douglasadams&quot;,&quot;type&quot;:&quot;string&quot;},&quot;datatype&quot;:&quot;external-id&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P2002$00000026-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}]},&quot;sitelinks&quot;:{&quot;enwiki&quot;:{&quot;site&quot;:&quot;enwiki&quot;,&quot;title&quot;:&quot;Douglas Adams&quot;,&quot;badges&quot;:[]},&quot;nlwiki&quot;:{&quot;site&quot;:&quot;nlwiki&quot;,&quot;title&quot;:&quot;Douglas Adams&quot;,&quot;badges&quot;:[]}}}</text>
+      <sha1>0000000000000000000000000000000</sha1>
+    </revision>
+    <revision>
+      <id>2200000003</id>
+      <parentid>2200000002</parentid>
+      <timestamp>2026-10-22T10:03:00Z</timestamp>
+      <contributor>
+        <username>Example</username>
+        <id>42</id>
+      </contributor>
+      <comment>/* wbsetlabel-set:1|en */ example &lt;edit&gt;</comment>
+      <origin>2200000003</origin>
+      <model>wikibase-item</model>
+      <format>application/json</format>
+      <text bytes="3969" sha1="0000000000000000000000000000000" xml:space="preserve">{&quot;type&quot;:&quot;item&quot;,&quot;id&quot;:&quot;Q42&quot;,&quot;labels&quot;:{&quot;en&quot;:{&quot;language&quot;:&quot;en&quot;,&quot;value&quot;:&quot;Douglas Adams (newest)&quot;},&quot;nl&quot;:{&quot;language&quot;:&quot;nl&quot;,&quot;value&quot;:&quot;Douglas Adams&quot;},&quot;ja&quot;:{&quot;language&quot;:&quot;ja&quot;,&quot;value&quot;:&quot;\u30c0\u30b0\u30e9\u30b9\u30fb\u30a2\u30c0\u30e0\u30ba&quot;},&quot;ru&quot;:{&quot;language&quot;:&quot;ru&quot;,&quot;value&quot;:&quot;\u0414\u0443\u0433\u043b\u0430\u0441 \u0410\u0434\u0430\u043c\u0441&quot;}},&quot;descriptions&quot;:{&quot;en&quot;:{&quot;language&quot;:&quot;en&quot;,&quot;value&quot;:&quot;English writer and humourist (1952\u20132001)&quot;}},&quot;aliases&quot;:{&quot;en&quot;:[{&quot;language&quot;:&quot;en&quot;,&quot;value&quot;:&quot;Douglas No\u00ebl Adams&quot;},{&quot;language&quot;:&quot;en&quot;,&quot;value&quot;:&quot;DNA \ud83d\ude00&quot;}]},&quot;claims&quot;:{&quot;P31&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P31&quot;,&quot;datavalue&quot;:{&quot;value&quot;:{&quot;entity-type&quot;:&quot;item&quot;,&quot;numeric-id&quot;:5,&quot;id&quot;:&quot;Q5&quot;},&quot;type&quot;:&quot;wikibase-entityid&quot;},&quot;datatype&quot;:&quot;wikibase-item&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P31$0000001a-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P27&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P27&quot;,&quot;datavalue&quot;:{&quot;value&quot;:{&quot;entity-type&quot;:&quot;item&quot;,&quot;numeric-id&quot;:145,&quot;id&quot;:&quot;Q145&quot;},&quot;type&quot;:&quot;wikibase-entityid&quot;},&quot;datatype&quot;:&quot;wikibase-item&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P27$0000001b-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P569&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P569&quot;,&quot;datavalue&quot;:{&quot;value&quot;:{&quot;time&quot;:&quot;+1952-03-11T00:00:00Z&quot;,&quot;timezone&quot;:0,&quot;before&quot;:0,&quot;after&quot;:0,&quot;precision&quot;:11,&quot;calendarmodel&quot;:&quot;http:\/\/www.wikidata.org\/entity\/Q1985727&quot;},&quot;type&quot;:&quot;time&quot;},&quot;datatype&quot;:&quot;time&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P569$0000001c-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P570&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P570&quot;,&quot;datavalue&quot;:{&quot;value&quot;:{&quot;time&quot;:&quot;+2001-05-11T00:00:00Z&quot;,&quot;timezone&quot;:0,&quot;before&quot;:0,&quot;after&quot;:0,&quot;precision&quot;:11,&quot;calendarmodel&quot;:&quot;http:\/\/www.wikidata.org\/entity\/Q1985727&quot;},&quot;type&quot;:&quot;time&quot;},&quot;datatype&quot;:&quot;time&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P570$0000001d-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P434&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P434&quot;,&quot;datavalue&quot;:{&quot;value&quot;:&quot;e9ed318d-8cc5-4cf8-ab77-505e39ab6ea4&quot;,&quot;type&quot;:&quot;string&quot;},&quot;datatype&quot;:&quot;external-id&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P434$0000001e-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P214&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P214&quot;,&quot;datavalue&quot;:{&quot;value&quot;:&quot;113230702&quot;,&quot;type&quot;:&quot;string&quot;},&quot;datatype&quot;:&quot;external-id&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P214$0000001f-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P213&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P213&quot;,&quot;datavalue&quot;:{&quot;value&quot;:&quot;0000 0000 8045 6315&quot;,&quot;type&quot;:&quot;string&quot;},&quot;datatype&quot;:&quot;external-id&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P213$00000020-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P1953&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P1953&quot;,&quot;datavalue&quot;:{&quot;value&quot;:&quot;66941&quot;,&quot;type&quot;:&quot;string&quot;},&quot;datatype&quot;:&quot;external-id&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P1953$00000021-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P2048&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P2048&quot;,&quot;datavalue&quot;:{&quot;value&quot;:{&quot;amount&quot;:&quot;+1.96&quot;,&quot;unit&quot;:&quot;http:\/\/www.wikidata.org\/entity\/Q11573&quot;,&quot;upperBound&quot;:&quot;+1.97&quot;,&quot;lowerBound&quot;:&quot;+1.95&quot;},&quot;type&quot;:&quot;quantity&quot;},&quot;datatype&quot;:&quot;quantity&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P2048$00000022-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P40&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;somevalue&quot;,&quot;property&quot;:&quot;P40&quot;,&quot;datatype&quot;:&quot;wikibase-item&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P40$00000023-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P26&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;novalue&quot;,&quot;property&quot;:&quot;P26&quot;,&quot;datatype&quot;:&quot;wikibase-item&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P26$00000024-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P18&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P18&quot;,&quot;datavalue&quot;:{&quot;value&quot;:&quot;Douglas adams portrait cropped.jpg&quot;,&quot;type&quot;:&quot;string&quot;},&quot;datatype&quot;:&quot;commonsMedia&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P18$00000025-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;deprecated&quot;}],&quot;P2002&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P2002&quot;,&quot;datavalue&quot;:{&quot;value&quot;:&quot;douglasadams&quot;,&quot;type&quot;:&quot;string&quot;},&quot;datatype&quot;:&quot;external-id&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P2002$00000026-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}]},&quot;sitelinks&quot;:{&quot;enwiki&quot;:{&quot;site&quot;:&quot;enwiki&quot;,&quot;title&quot;:&quot;Douglas Adams&quot;,&quot;badges&quot;:[]},&quot;nlwiki&quot;:{&quot;site&quot;:&quot;nlwiki&quot;,&quot;title&quot;:&quot;Douglas Adams&quot;,&quot;badges&quot;:[]}}}</text>
+      <sha1>0000000000000000000000000000000</sha1>
+    </revision>
+  </page>
+  <page>
+    <title>Q1072</title>
+    <ns>0</ns>
+    <id>1172</id>
+    <revision>
+      <id>2200000004</id>
+      <parentid>2200000003</parentid>
+      <timestamp>2026-10-22T10:04:00Z</timestamp>
+      <contributor>
+        <username>Example</username>
+        <id>42</id>
+      </contributor>
+      <comment>/* wbsetlabel-set:1|en */ example &lt;edit&gt;</comment>
+      <origin>2200000004</origin>
+      <model>wikibase-item</model>
+      <format>application/json</format>
+      <text bytes="2302" sha1="0000000000000000000000000000000" xml:space="preserve">{&quot;type&quot;:&quot;item&quot;,&quot;id&quot;:&quot;Q1072&quot;,&quot;labels&quot;:{&quot;nl&quot;:{&quot;language&quot;:&quot;nl&quot;,&quot;value&quot;:&quot;Pinkpop&quot;},&quot;en&quot;:{&quot;language&quot;:&quot;en&quot;,&quot;value&quot;:&quot;Pinkpop Festival&quot;}},&quot;descriptions&quot;:{&quot;nl&quot;:{&quot;language&quot;:&quot;nl&quot;,&quot;value&quot;:&quot;muziekfestival in Landgraaf&quot;}},&quot;aliases&quot;:[],&quot;claims&quot;:{&quot;P31&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P31&quot;,&quot;datavalue&quot;:{&quot;value&quot;:{&quot;entity-type&quot;:&quot;item&quot;,&quot;numeric-id&quot;:99000001,&quot;id&quot;:&quot;Q99000001&quot;},&quot;type&quot;:&quot;wikibase-entityid&quot;},&quot;datatype&quot;:&quot;wikibase-item&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P31$0000002d-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P17&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P17&quot;,&quot;datavalue&quot;:{&quot;value&quot;:{&quot;entity-type&quot;:&quot;item&quot;,&quot;numeric-id&quot;:55,&quot;id&quot;:&quot;Q55&quot;},&quot;type&quot;:&quot;wikibase-entityid&quot;},&quot;datatype&quot;:&quot;wikibase-item&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P17$0000002e-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P625&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P625&quot;,&quot;datavalue&quot;:{&quot;value&quot;:{&quot;latitude&quot;:50.9,&quot;longitude&quot;:6.03,&quot;altitude&quot;:null,&quot;precision&quot;:0.0001,&quot;globe&quot;:&quot;http:\/\/www.wikidata.org\/entity\/Q2&quot;},&quot;type&quot;:&quot;globecoordinate&quot;},&quot;datatype&quot;:&quot;globe-coordinate&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P625$0000002f-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P571&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P571&quot;,&quot;datavalue&quot;:{&quot;value&quot;:{&quot;time&quot;:&quot;+1970-05-18T00:00:00Z&quot;,&quot;timezone&quot;:0,&quot;before&quot;:0,&quot;after&quot;:0,&quot;precision&quot;:11,&quot;calendarmodel&quot;:&quot;http:\/\/www.wikidata.org\/entity\/Q1985727&quot;},&quot;type&quot;:&quot;time&quot;},&quot;datatype&quot;:&quot;time&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P571$00000030-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P856&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P856&quot;,&quot;datavalue&quot;:{&quot;value&quot;:&quot;https:\/\/www.pinkpop.nl\/&quot;,&quot;type&quot;:&quot;string&quot;},&quot;datatype&quot;:&quot;url&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P856$00000031-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P434&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P434&quot;,&quot;datavalue&quot;:{&quot;value&quot;:&quot;e4b4b7e5-5c2c-4f8a-a8a5-0b2b0b6a8b2e&quot;,&quot;type&quot;:&quot;string&quot;},&quot;datatype&quot;:&quot;external-id&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P434$00000032-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}],&quot;P11693&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P11693&quot;,&quot;datavalue&quot;:{&quot;value&quot;:&quot;123456789&quot;,&quot;type&quot;:&quot;string&quot;},&quot;datatype&quot;:&quot;external-id&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P11693$00000033-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}]},&quot;sitelinks&quot;:{&quot;nlwiki&quot;:{&quot;site&quot;:&quot;nlwiki&quot;,&quot;title&quot;:&quot;Pinkpop&quot;,&quot;badges&quot;:[]},&quot;enwiki&quot;:{&quot;site&quot;:&quot;enwiki&quot;,&quot;title&quot;:&quot;Pinkpop Festival&quot;,&quot;badges&quot;:[]}}}</text>
+      <sha1>0000000000000000000000000000000</sha1>
+    </revision>
+  </page>
+  <page>
+    <title>Wikidata:Project chat</title>
+    <ns>4</ns>
+    <id>5</id>
+    <revision>
+      <id>2200000005</id>
+      <parentid>2200000004</parentid>
+      <timestamp>2026-10-22T10:05:00Z</timestamp>
+      <contributor>
+        <username>Example</username>
+        <id>42</id>
+      </contributor>
+      <comment>/* wbsetlabel-set:1|en */ example &lt;edit&gt;</comment>
+      <origin>2200000005</origin>
+      <model>wikitext</model>
+      <format>text/x-wiki</format>
+      <text bytes="23" sha1="0000000000000000000000000000000" xml:space="preserve">== A &lt;b&gt;question&lt;/b&gt; ==</text>
+      <sha1>0000000000000000000000000000000</sha1>
+    </revision>
+  </page>
+  <page>
+    <title>Property:P31</title>
+    <ns>120</ns>
+    <id>3031</id>
+    <revision>
+      <id>2200000006</id>
+      <parentid>2200000005</parentid>
+      <timestamp>2026-10-22T10:06:00Z</timestamp>
+      <contributor>
+        <username>Example</username>
+        <id>42</id>
+      </contributor>
+      <comment>/* wbsetlabel-set:1|en */ example &lt;edit&gt;</comment>
+      <origin>2200000006</origin>
+      <model>wikibase-property</model>
+      <format>application/json</format>
+      <text bytes="534" sha1="0000000000000000000000000000000" xml:space="preserve">{&quot;type&quot;:&quot;property&quot;,&quot;id&quot;:&quot;P31&quot;,&quot;datatype&quot;:&quot;wikibase-item&quot;,&quot;labels&quot;:{&quot;en&quot;:{&quot;language&quot;:&quot;en&quot;,&quot;value&quot;:&quot;instance of&quot;},&quot;nl&quot;:{&quot;language&quot;:&quot;nl&quot;,&quot;value&quot;:&quot;is een&quot;}},&quot;descriptions&quot;:{&quot;en&quot;:{&quot;language&quot;:&quot;en&quot;,&quot;value&quot;:&quot;that class of which this subject is a particular example and member&quot;}},&quot;aliases&quot;:[],&quot;claims&quot;:{&quot;P1630&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P1630&quot;,&quot;datavalue&quot;:{&quot;value&quot;:&quot;https:\/\/example.org\/$1&quot;,&quot;type&quot;:&quot;string&quot;},&quot;datatype&quot;:&quot;external-id&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P1630$00000046-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}]}}</text>
+      <sha1>0000000000000000000000000000000</sha1>
+    </revision>
+  </page>
+  <page>
+    <title>Lexeme:L7</title>
+    <ns>146</ns>
+    <id>4007</id>
+    <revision>
+      <id>2200000007</id>
+      <parentid>2200000006</parentid>
+      <timestamp>2026-10-22T10:07:00Z</timestamp>
+      <contributor>
+        <username>Example</username>
+        <id>42</id>
+      </contributor>
+      <comment>/* wbsetlabel-set:1|en */ example &lt;edit&gt;</comment>
+      <origin>2200000007</origin>
+      <model>wikibase-lexeme</model>
+      <format>application/json</format>
+      <text bytes="937" sha1="0000000000000000000000000000000" xml:space="preserve">{&quot;type&quot;:&quot;lexeme&quot;,&quot;id&quot;:&quot;L7&quot;,&quot;labels&quot;:[],&quot;descriptions&quot;:[],&quot;aliases&quot;:[],&quot;claims&quot;:[],&quot;lemmas&quot;:{&quot;en&quot;:{&quot;language&quot;:&quot;en&quot;,&quot;value&quot;:&quot;cat&quot;}},&quot;lexicalCategory&quot;:&quot;Q1084&quot;,&quot;language&quot;:&quot;Q1860&quot;,&quot;forms&quot;:[{&quot;id&quot;:&quot;L7-F1&quot;,&quot;representations&quot;:{&quot;en&quot;:{&quot;language&quot;:&quot;en&quot;,&quot;value&quot;:&quot;cats&quot;}},&quot;grammaticalFeatures&quot;:[&quot;Q146786&quot;],&quot;claims&quot;:{&quot;P898&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P898&quot;,&quot;datavalue&quot;:{&quot;value&quot;:&quot;k\u00e6ts&quot;,&quot;type&quot;:&quot;string&quot;},&quot;datatype&quot;:&quot;string&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P898$00000047-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}]}}],&quot;senses&quot;:[{&quot;id&quot;:&quot;L7-S1&quot;,&quot;glosses&quot;:{&quot;en&quot;:{&quot;language&quot;:&quot;en&quot;,&quot;value&quot;:&quot;domesticated feline&quot;},&quot;nl&quot;:{&quot;language&quot;:&quot;nl&quot;,&quot;value&quot;:&quot;huiskat&quot;}},&quot;claims&quot;:{&quot;P5137&quot;:[{&quot;mainsnak&quot;:{&quot;snaktype&quot;:&quot;value&quot;,&quot;property&quot;:&quot;P5137&quot;,&quot;datavalue&quot;:{&quot;value&quot;:{&quot;entity-type&quot;:&quot;item&quot;,&quot;numeric-id&quot;:146,&quot;id&quot;:&quot;Q146&quot;},&quot;type&quot;:&quot;wikibase-entityid&quot;},&quot;datatype&quot;:&quot;wikibase-item&quot;},&quot;type&quot;:&quot;statement&quot;,&quot;id&quot;:&quot;P5137$00000048-0000-4000-8000-000000000000&quot;,&quot;rank&quot;:&quot;normal&quot;}]}}]}</text>
+      <sha1>0000000000000000000000000000000</sha1>
+    </revision>
+  </page>
+  <page>
+    <title>Q2003</title>
+    <ns>0</ns>
+    <id>2103</id>
+    <revision>
+      <id>2200000008</id>
+      <parentid>2200000007</parentid>
+      <timestamp>2026-10-22T10:08:00Z</timestamp>
+      <contributor>
+        <username>Example</username>
+        <id>42</id>
+      </contributor>
+      <comment>/* wbsetlabel-set:1|en */ example &lt;edit&gt;</comment>
+      <origin>2200000008</origin>
+      <model>wikibase-item</model>
+      <format>application/json</format>
+      <text bytes="98" deleted="deleted" />
+      <sha1>0000000000000000000000000000000</sha1>
+    </revision>
+  </page>
+</mediawiki>

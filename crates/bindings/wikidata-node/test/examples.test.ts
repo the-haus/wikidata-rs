@@ -6,8 +6,8 @@ import { pathToFileURL } from "node:url";
 
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { openDump } from "../ts/index.js";
-import { sample } from "./helpers.js";
+import { openDump, RedirectIndex } from "../ts/index.js";
+import { fixture, sample, sampleRevisions } from "./helpers.js";
 
 const root = resolve(__dirname, "..");
 // The examples are TypeScript, run as `npx tsx examples/places.ts` runs them.
@@ -97,5 +97,34 @@ describe("examples", () => {
     expect(JSON.parse(second.stderr).classIndex).toBe("loaded");
     expect(records(second.stdout).get("Q1072")!.as).toEqual(["artist", "festival"]);
     expect(records(second.stdout).get("Q42")!.language).toBe("en");
+  });
+
+  it("refresh-known", async () => {
+    const { ids, revisions } = sampleRevisions();
+    const known: Record<string, number> = {};
+    ids.forEach((id, i) => (known[id] = revisions[i]!));
+    known["Q42"]! -= 1;
+    Object.assign(known, { Q1: 5, Q3: 5, Q999999999: 5 });
+    const knownFile = join(work, "known.json");
+    writeFileSync(knownFile, JSON.stringify(known));
+    const redirects = join(work, "redirects.wdr");
+    (
+      await RedirectIndex.build({ redirects: fixture("wikidatawiki-redirect.sql"), pages: fixture("wikidatawiki-page.sql") })
+    ).save(redirects);
+    const r = run("refresh-known.ts", [sample, knownFile, redirects, join(work, "checkpoint.json")]);
+    const lines = r.stdout.trim().split("\n").map((l) => JSON.parse(l) as { id: string; mergedFrom: string[] });
+    expect(lines.map((l) => [l.id, l.mergedFrom])).toEqual([["Q42", ["Q1"]]]);
+    const summary = JSON.parse(r.stderr);
+    expect(summary).toMatchObject({
+      changed: 1,
+      unchanged: ids.length - 1,
+      merged: [{ from: "Q1", to: "Q42", inDump: true }],
+      deleted: ["Q3"],
+      newer: ["Q999999999"],
+    });
+    // A day's incremental dump: Q42 changed again, Q7 was merged.
+    const incr = run("refresh-known.ts", [fixture("incremental.xml"), knownFile]);
+    expect(JSON.parse(incr.stderr).mergedToday).toEqual([{ from: "Q7", to: "Q55" }]);
+    expect(incr.stdout).toContain("Douglas Adams (newest)");
   });
 });

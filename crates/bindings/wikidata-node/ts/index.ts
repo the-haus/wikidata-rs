@@ -21,13 +21,24 @@ import { fileURLToPath } from "node:url";
 
 import { decodeEntities, EXTERNAL_ID_KEYS } from "./decode.js";
 import * as native from "./native.js";
-import type { NativeClassIndex, NativeOptions, NativeReader } from "./native.js";
-import { EntityStream } from "./stream.js";
+import type {
+  NativeClassIndex,
+  NativeJsonBatch,
+  NativeOpenOptions,
+  NativeOptions,
+  NativePlaceIndex,
+  NativeReader,
+  NativeRedirectIndex,
+} from "./native.js";
+import { EntityStream, type StreamHooks } from "./stream.js";
 import {
   WikidataError,
   type ClassIndexLike,
   type ClassIndexOptions,
   type CommonOptions,
+  type DownloadOptions,
+  type DownloadProgress,
+  type DownloadResult,
   type EntityOptions,
   type EntityRecord,
   type ExtractOptions,
@@ -35,8 +46,16 @@ import {
   type ExternalIdKey,
   type FileInfo,
   type ItemNumbers,
+  type LiveChange,
+  type LiveOptions,
+  type LiveStats,
   type OpenOptions,
+  type PlaceIndexLike,
+  type PlaceIndexOptions,
   type Progress,
+  type RedirectIndexLike,
+  type RedirectIndexOptions,
+  type Revisions,
   type ScanStats,
 } from "./types.js";
 
@@ -64,22 +83,48 @@ function itemNumbers(a: ItemNumbers): Uint32Array {
   return out;
 }
 
-/** The filter as JSON, with the typed arrays of `ids` passed aside (`{"$items": k}`). */
+/** Revision ids as a `Float64Array` (exact up to 2^53). */
+function revisionNumbers(a: Revisions): Float64Array {
+  if (a instanceof Float64Array) return a;
+  const out = new Float64Array(a.length);
+  for (let i = 0; i < a.length; i++) {
+    const n = Number(a[i]);
+    if (!Number.isSafeInteger(n) || n < 0) throw new WikidataError(`revisions: not a revision id: ${String(a[i])}`);
+    out[i] = n;
+  }
+  return out;
+}
+
+/**
+ * The filter as JSON, with the typed arrays of `ids` and `revisions`
+ * passed aside (`{"$items": k}`, `{"$revisions": k}`), and `ids` maps as
+ * objects.
+ */
 function filterOptions(filter: unknown, out: NativeOptions): void {
   const arrays: Uint32Array[] = [];
+  const revisions: Float64Array[] = [];
   out.filterJson = JSON.stringify(filter, (key, value: unknown) => {
+    if (key === "ids" && value instanceof Map) return Object.fromEntries(value);
+    if (key === "revisions" && (Array.isArray(value) || ArrayBuffer.isView(value))) {
+      revisions.push(revisionNumbers(value as Revisions));
+      return { $revisions: revisions.length - 1 };
+    }
     if (!ArrayBuffer.isView(value) || value instanceof DataView) return value;
-    if (key !== "ids") throw new WikidataError(`${key}: a typed array is only accepted for ids`);
+    if (key !== "ids") throw new WikidataError(`${key}: a typed array is only accepted for ids and revisions`);
     arrays.push(itemNumbers(value as ItemNumbers));
     return { $items: arrays.length - 1 };
   });
   if (arrays.length > 0) out.idArrays = arrays;
+  if (revisions.length > 0) out.revisionArrays = revisions;
 }
 
 function commonOptions(o: CommonOptions): NativeOptions {
   const out: NativeOptions = {};
   if (o.filter !== undefined) filterOptions(o.filter, out);
   if (o.classIndex !== undefined) out.classIndex = o.classIndex._id;
+  if (o.placeIndex !== undefined) out.placeIndex = o.placeIndex._placeId;
+  if (o.redirects !== undefined) out.redirectIndex = o.redirects._redirectId;
+  if (o.buildPlaceIndex !== undefined) out.placeIndexOutput = toPath(o.buildPlaceIndex);
   if (o.threads !== undefined) out.threads = o.threads;
   if (o.limit !== undefined) out.limit = o.limit;
   if (o.allowTruncated !== undefined) out.allowTruncated = o.allowTruncated;
@@ -87,10 +132,12 @@ function commonOptions(o: CommonOptions): NativeOptions {
   return out;
 }
 
-function openOptions(o: OpenOptions): { userAgent?: string; retries?: number } {
-  const out: { userAgent?: string; retries?: number } = {};
+function openOptions(o: OpenOptions): NativeOpenOptions {
+  const out: NativeOpenOptions = {};
   if (o.userAgent !== undefined) out.userAgent = o.userAgent;
   if (o.retries !== undefined) out.retries = o.retries;
+  if (o.mirrors !== undefined) out.mirrors = [...o.mirrors];
+  if (o.connections !== undefined) out.connections = o.connections;
   return out;
 }
 
@@ -104,24 +151,43 @@ function entityOptions(o: EntityOptions): NativeOptions {
   if (o.labels !== undefined) out.labels = o.labels;
   if (o.descriptions !== undefined) out.descriptions = o.descriptions;
   if (o.aliases !== undefined) out.aliases = o.aliases;
-  if (o.qualifiers !== undefined) out.qualifiers = o.qualifiers;
+  if (Array.isArray(o.qualifiers)) {
+    out.qualifiers = true;
+    out.qualifierProperties = [...o.qualifiers];
+  } else if (o.qualifiers !== undefined) out.qualifiers = o.qualifiers;
   if (o.references !== undefined) out.references = o.references;
   if (o.deprecated !== undefined) out.deprecated = o.deprecated;
   if (o.bestRank !== undefined) out.bestRank = o.bestRank;
   if (o.json !== undefined) out.json = o.json;
   if (o.batchSize !== undefined) out.batchSize = o.batchSize;
   if (o.readAhead !== undefined) out.readAhead = o.readAhead;
+  if (o.checkpointEvery !== undefined) out.checkpointEvery = o.checkpointEvery;
+  if (o.resumeFrom !== undefined) out.resume = Buffer.from(o.resumeFrom.data, "base64");
+  if (o.referencedLabels !== undefined) {
+    const { languages, output } = o.referencedLabels;
+    out.referencedLabelsJson = JSON.stringify(output === undefined ? { languages } : { languages, output: toPath(output) });
+  }
   return out;
+}
+
+function entityHooks(o: EntityOptions): StreamHooks {
+  return { onCheckpoint: o.onCheckpoint };
 }
 
 /** Run a task that sends no records; resolve with its end stats. */
 async function task<S>(
   start: (cb: Parameters<NativeReader["extract"]>[1]) => ReturnType<NativeReader["extract"]> | Promise<ReturnType<NativeReader["extract"]>>,
   options: { onProgress?: ((p: Progress) => void) | undefined; signal?: AbortSignal | undefined },
+  hooks: StreamHooks = {},
 ): Promise<S> {
-  const stream = new EntityStream<never, S>(start, () => [], options.onProgress, options.signal);
-  for await (const _ of stream) {
-    void _;
+  const stream = new EntityStream<never, S>(start, () => [], options.onProgress, options.signal, undefined, hooks);
+  try {
+    for await (const _ of stream) {
+      void _;
+    }
+  } catch (e) {
+    if (hooks.holdUntilEnd) await stream._ended();
+    throw e;
   }
   return stream.stats;
 }
@@ -135,7 +201,7 @@ export class ClassIndex implements ClassIndexLike {
     this.#native = n;
   }
 
-  /** Build the class index of a dump (a pass that parses only P279 claims). */
+  /** Build the class index of a dump (a pass that parses only P279 claims; with `buildPlaceIndex`, the place index too). */
   static async build(input: string | URL, options: ClassIndexOptions & OpenOptions = {}): Promise<ClassIndex> {
     return (await openDump(input, options)).classIndex(options);
   }
@@ -190,6 +256,214 @@ export class ClassIndex implements ClassIndexLike {
   }
 }
 
+/**
+ * A place index: each item's countries, by its P17, its P131 chain
+ * (followed up, cycle-safe) and its P159. For `inCountry` filters, and
+ * for `languages: { by: "P17", … }` rules (an item that names only its
+ * place gets its country's languages).
+ */
+export class PlaceIndex implements PlaceIndexLike {
+  readonly #native: NativePlaceIndex;
+
+  /** @internal */
+  constructor(n: NativePlaceIndex) {
+    this.#native = n;
+  }
+
+  /** Build the place index of a dump (a pass that parses only P17, P131 and P159; with `buildClassIndex`, the class index too). */
+  static async build(input: string | URL, options: PlaceIndexOptions & OpenOptions = {}): Promise<PlaceIndex> {
+    return (await openDump(input, options)).placeIndex(options);
+  }
+
+  /** Load a file written by {@link PlaceIndex.save} (or `wikidata places -o`). */
+  static async load(path: string | URL): Promise<PlaceIndex> {
+    try {
+      return new PlaceIndex(await native.loadPlaceIndex(toPath(path)));
+    } catch (e) {
+      throw new WikidataError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  /** @internal */
+  get _placeId(): number {
+    return this.#native.id;
+  }
+
+  /** Items with a country. */
+  get size(): number {
+    return this.#native.size;
+  }
+
+  /** Distinct sets of countries. */
+  get sets(): number {
+    return this.#native.sets;
+  }
+
+  /** Bytes in memory. */
+  get heapBytes(): number {
+    return this.#native.heapBytes;
+  }
+
+  /** The dump it was built from. */
+  get source(): string {
+    return this.#native.source;
+  }
+
+  /** The countries of an item: its P17, then through its P131 places, then its P159's (`[]` when unknown). */
+  countryOf(id: string): string[] {
+    return this.#native.countryOf(id);
+  }
+
+  /** {@link countryOf} for many items (by number) at once. */
+  countriesOf(items: ItemNumbers): string[][] {
+    const { offsets, countries } = this.#native.countriesOf(itemNumbers(items));
+    const out: string[][] = [];
+    for (let i = 0; i + 1 < offsets.length; i++) {
+      const list: string[] = [];
+      for (let k = offsets[i]!; k < offsets[i + 1]!; k++) list.push(`Q${countries[k]!}`);
+      out.push(list);
+    }
+    return out;
+  }
+
+  /** Write to a file (zstd-compressed arrays). */
+  save(path: string | URL): void {
+    this.#native.save(toPath(path));
+  }
+}
+
+/**
+ * Item redirects (merges), from the SQL dumps
+ * (`wikidatawiki-<date>-redirect.sql.gz` joined with `…-page.sql.gz`).
+ * Pass it as `redirects` to follow merges in a pass.
+ */
+export class RedirectIndex implements RedirectIndexLike {
+  readonly #native: NativeRedirectIndex;
+
+  /** @internal */
+  constructor(n: NativeRedirectIndex) {
+    this.#native = n;
+  }
+
+  /** Build from the `redirect` and `page` SQL dumps (paths or URLs). */
+  static async build(options: RedirectIndexOptions): Promise<RedirectIndex> {
+    const stats = await task<{ token: number }>(
+      (cb) => {
+        const o: Parameters<typeof native.buildRedirects>[0] = {
+          redirects: toPath(options.redirects),
+          pages: toPath(options.pages),
+          open: openOptions(options),
+        };
+        if (options.threads !== undefined) o.threads = options.threads;
+        return native.buildRedirects(o, cb);
+      },
+      options,
+    );
+    if ((stats as { stopped?: boolean }).stopped) throw new WikidataError("building the redirect index was stopped");
+    return new RedirectIndex(native.takeRedirectIndex(stats.token));
+  }
+
+  /** Load a file written by {@link RedirectIndex.save} (or `wikidata redirects -o`). */
+  static async load(path: string | URL): Promise<RedirectIndex> {
+    try {
+      return new RedirectIndex(await native.loadRedirectIndex(toPath(path)));
+    } catch (e) {
+      throw new WikidataError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  /** @internal */
+  get _redirectId(): number {
+    return this.#native.id;
+  }
+
+  /** Redirects. */
+  get size(): number {
+    return this.#native.size;
+  }
+
+  /** The SQL dumps it was built from. */
+  get source(): string {
+    return this.#native.source;
+  }
+
+  /** Where an item was merged into (following double redirects); `null` when it is not a redirect. */
+  resolve(id: string): string | null {
+    return this.#native.resolve(id);
+  }
+
+  /** Every redirect, `{ from: "Q1", to: "Q2" }`, in `from` order. */
+  *entries(): Generator<{ from: string; to: string }, void, undefined> {
+    const { from, to } = this.#native.pairs();
+    for (let i = 0; i < from.length; i++) yield { from: `Q${from[i]!}`, to: `Q${to[i]!}` };
+  }
+
+  /** Write to a file (zstd-compressed arrays). */
+  save(path: string | URL): void {
+    this.#native.save(toPath(path));
+  }
+}
+
+/** The item redirects of the SQL dumps, `{ from, to }` (see {@link RedirectIndex.build}). */
+export async function* readRedirects(
+  options: RedirectIndexOptions,
+): AsyncGenerator<{ from: string; to: string }, void, undefined> {
+  yield* (await RedirectIndex.build(options)).entries();
+}
+
+/**
+ * The entities edited on Wikidata, as they are edited (Wikimedia's
+ * EventStreams `recentchange`), filtered natively by `ids`. Every change
+ * carries its `eventId`: pass the last one as `lastEventId` to resume
+ * right after it. Dropped connections resume the same way; nothing is
+ * missed or repeated. Runs until closed (`break`, `close()`, a signal).
+ */
+export function liveChanges(options: LiveOptions = {}): EntityStream<LiveChange, LiveStats> {
+  return new EntityStream<LiveChange, LiveStats>(
+    (cb) => {
+      const o: Parameters<typeof native.live>[0] = { open: openOptions(options) };
+      if (options.ids !== undefined) {
+        if (Array.isArray(options.ids)) o.ids = [...options.ids];
+        else o.items = itemNumbers(options.ids);
+      }
+      if (options.lastEventId !== undefined) o.lastEventId = options.lastEventId;
+      if (options.since !== undefined) o.since = options.since instanceof Date ? options.since.toISOString() : options.since;
+      if (options.namespaces !== undefined) o.namespaces = [...options.namespaces];
+      if (options.wiki !== undefined) o.wiki = options.wiki;
+      if (options.url !== undefined) o.url = options.url;
+      return native.live(o, cb);
+    },
+    ((b: NativeJsonBatch) => JSON.parse(b.json) as LiveChange[]) as (b: never) => LiveChange[],
+    undefined,
+    options.signal,
+    () => ({ events: 0, changes: 0, reconnects: 0, lastEventId: null }),
+  );
+}
+
+/**
+ * Download a dump: the newest complete one (or `date`), in ranges from
+ * the base and every mirror at once, into one preallocated `.part` file;
+ * resumable (run it again after a stop or a crash), SHA-1 verified, and
+ * renamed to its final name only once verified.
+ */
+export async function downloadDump(options: DownloadOptions): Promise<DownloadResult> {
+  return task<DownloadResult>(
+    (cb) => {
+      const open = openOptions(options);
+      if (options.rangeSize !== undefined) open.rangeSize = options.rangeSize;
+      const o: Parameters<typeof native.downloadDump>[0] = { dir: toPath(options.dir), open };
+      if (options.date !== undefined && options.date !== "latest") o.date = options.date;
+      if (options.base !== undefined) o.base = options.base;
+      if (options.mirrors !== undefined) o.mirrors = [...options.mirrors];
+      if (options.file !== undefined) o.file = options.file;
+      if (options.verify !== undefined) o.verify = options.verify;
+      return native.downloadDump(o, cb);
+    },
+    { signal: options.signal },
+    { onStatus: options.onProgress as ((s: unknown) => void) | undefined, holdUntilEnd: true },
+  );
+}
+
 /** An open dump. Create one with {@link openDump}. */
 export class DumpReader {
   readonly #native: NativeReader;
@@ -225,6 +499,8 @@ export class DumpReader {
       decodeEntities as (b: never) => EntityRecord[],
       options.onProgress,
       options.signal,
+      undefined,
+      entityHooks(options),
     );
   }
 
@@ -247,14 +523,26 @@ export class DumpReader {
     return task<FileInfo>((cb) => this.#native.fileInfo(commonOptions(options), cb), options);
   }
 
-  /** Build the class index (a pass that parses only P279 claims). */
+  /** Build the class index (a pass that parses only P279 claims; with `buildPlaceIndex`, the place index too). */
   async classIndex(options: ClassIndexOptions = {}): Promise<ClassIndex> {
     const opts: NativeOptions = {};
     if (options.threads !== undefined) opts.threads = options.threads;
     if (options.allowTruncated !== undefined) opts.allowTruncated = options.allowTruncated;
+    if (options.buildPlaceIndex !== undefined) opts.placeIndexOutput = toPath(options.buildPlaceIndex);
     const stats = await task<ScanStats & { token: number }>((cb) => this.#native.buildClassIndex(opts, cb), options);
     if (stats.stopped) throw new WikidataError("building the class index was stopped");
     return new ClassIndex(native.takeClassIndex(stats.token));
+  }
+
+  /** Build the place index (a pass that parses only P17, P131 and P159; with `buildClassIndex`, the class index too). */
+  async placeIndex(options: PlaceIndexOptions = {}): Promise<PlaceIndex> {
+    const opts: NativeOptions = {};
+    if (options.threads !== undefined) opts.threads = options.threads;
+    if (options.allowTruncated !== undefined) opts.allowTruncated = options.allowTruncated;
+    if (options.buildClassIndex !== undefined) opts.classIndexOutput = toPath(options.buildClassIndex);
+    const stats = await task<ScanStats & { token: number }>((cb) => this.#native.buildPlaceIndex(opts, cb), options);
+    if (stats.stopped) throw new WikidataError("building the place index was stopped");
+    return new PlaceIndex(native.takePlaceIndex(stats.token));
   }
 }
 
@@ -277,6 +565,8 @@ export function streamEntities(
     decodeEntities as (b: never) => EntityRecord[],
     options.onProgress,
     options.signal,
+    undefined,
+    entityHooks(options),
   );
 }
 

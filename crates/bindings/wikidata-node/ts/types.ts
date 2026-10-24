@@ -219,6 +219,12 @@ export interface EntityRecord {
    * the filter; `[]` when the filter names none.
    */
   readonly matchedBy: string[];
+  /**
+   * With a {@link RedirectIndexLike | redirect index} (`redirects`): the
+   * requested ids that were merged into this entity (it came through the
+   * pass because of them); `[]` otherwise.
+   */
+  readonly mergedFrom: string[];
   /** The full entity (parsed once, on first access; needs `json: true`, the default). */
   readonly entity: Entity;
   /** The full entity's JSON text. */
@@ -245,6 +251,15 @@ export type ItemNumbers =
   | BigInt64Array;
 
 /**
+ * Known revisions of `ids` (`lastrevid`s, in the order of `ids`): an
+ * entity no newer than its known revision did not change, and is skipped
+ * before parsing (it still counts as found: it is not in `missingIds`;
+ * `stats.unchanged` counts them). Revision ids pass 2^32, so prefer
+ * `Float64Array` or `BigUint64Array` to `Uint32Array`.
+ */
+export type Revisions = number[] | Float64Array | BigUint64Array | BigInt64Array | Uint32Array;
+
+/**
  * Which entities match. Objects with several keys, and arrays, mean all
  * of them. `any` and `all` also take an object of named filters, and any
  * filter can carry a `name`: an {@link EntityRecord}'s `matchedBy` lists
@@ -256,6 +271,9 @@ export type ItemNumbers =
  * { any: [{ hasProperty: ["P434"] }, { sitelink: "nlwiki" }] }
  * { any: { venue: { instanceOf: "Q8719053" }, artist: { hasProperty: "P434" } } }
  * { ids: Uint32Array.of(42, 64) }                                // Q42, Q64
+ * { ids: Uint32Array.of(42), revisions: Float64Array.of(2000000001) }  // only if changed since
+ * { ids: { Q42: 2000000001 } }                                   // the same, as a map
+ * { inCountry: "Q55" }                                           // needs placeIndex
  * ```
  */
 export type Filter =
@@ -266,7 +284,15 @@ export type Filter =
       all?: Filter[] | Record<string, Filter>;
       any?: Filter[] | Record<string, Filter>;
       not?: Filter;
-      ids?: string | string[] | ItemNumbers;
+      /** Ids; or a map of ids to their known revisions (see {@link Revisions}). */
+      ids?: string | string[] | ItemNumbers | Record<string, number> | Map<string, number>;
+      /** Known revisions of `ids`, in the same order. */
+      revisions?: Revisions;
+      /**
+       * In one of these countries: by the item's P17, its P131 chain, or
+       * its P159 (headquarters). Needs a `placeIndex`.
+       */
+      inCountry?: string | string[];
       type?: EntityType | EntityType[];
       hasProperty?: string | string[];
       claim?: string | { property: string; values?: string[] } | Record<string, string[]>;
@@ -336,6 +362,72 @@ export interface ScanStats {
   missingItemNumbers?: Uint32Array;
   /** The class index saved with `buildClassIndex`. */
   classIndex?: { path: string; classes: number; edges: number };
+  /** The place index saved with `buildPlaceIndex`. */
+  placeIndex?: { path: string; items: number; sets: number; bytes: number };
+  /**
+   * Entities of `ids` whose `lastrevid` was no newer than the revision
+   * given with them (skipped before parsing).
+   */
+  unchanged: number;
+  /**
+   * With a `redirects` index and `ids`, after a complete pass: the missing
+   * ids merged into another item (`inDump`: that item came through the
+   * pass, its record's `mergedFrom` names the id).
+   */
+  merged?: { from: string; to: string; inDump: boolean }[];
+  /** With a `redirects` index: missing ids neither in the dump nor redirected (deleted). */
+  deleted?: string[];
+  /** With a `redirects` index: missing ids above the dump's highest id (created after it). */
+  newer?: string[];
+  /** An incremental (XML) dump: the items merged that day (their newest revision is a redirect). */
+  redirects?: { from: string; to: string }[];
+  /** How `referencedLabels` were collected. */
+  labels?: LabelStats;
+  /**
+   * With `referencedLabels` (and no `output`), after a complete pass: the
+   * labels of the items the matches refer to, by id
+   * (`{ Q5: { en: "human", nl: "mens" } }`). Parsed on first access.
+   */
+  referencedLabels?: Record<string, Record<string, string>>;
+}
+
+/** How the labels of referenced items were collected. */
+export interface LabelStats {
+  /** Distinct items referenced. */
+  referenced: number;
+  /** Items with a label in the asked languages. */
+  labelled: number;
+  /** Labels taken during the pass (items after their first reference). */
+  duringPass: number;
+  /** Chunks read again after the pass (for items before their first reference). */
+  chunksReread: number;
+  /** Chunks of the pass. */
+  chunks: number;
+}
+
+/**
+ * Where a pass can resume: pass it as `resumeFrom` to continue after the
+ * records consumed before it (same input, same filter). JSON-safe: store
+ * it as it is. The readable fields are informative; `data` holds
+ * everything (position, counters, the ids found so far).
+ */
+export interface Checkpoint {
+  /** The input's file name. */
+  input: string;
+  /** The byte of the input reading resumes at (a bzip2 block, or a line of plain JSON). */
+  offset: number;
+  /** bzip2 blocks before it. */
+  block: number;
+  /** Chunks before it. */
+  chunk: number;
+  /** Decompressed bytes before it. */
+  bytesOut: number;
+  /** Entities seen before it. */
+  entities: number;
+  /** Entities matched before it. */
+  matched: number;
+  /** Everything, base64. */
+  data: string;
 }
 
 /** Options every task takes. */
@@ -344,6 +436,20 @@ export interface CommonOptions {
   filter?: Filter;
   /** For `instanceOf` with `subclasses: true`. */
   classIndex?: ClassIndexLike;
+  /** For `inCountry` filters, and for `languages`/`sitelinks` rules (an item whose claims choose nothing is looked up by its country). */
+  placeIndex?: PlaceIndexLike;
+  /**
+   * Follow merges: `ids` also match the items their ids were merged into
+   * (`EntityRecord.mergedFrom`), and the missing ids are sorted into
+   * `stats.merged`, `stats.deleted` and `stats.newer`.
+   */
+  redirects?: RedirectIndexLike;
+  /**
+   * Also build the place index, as {@link PlaceIndex.build} would, and
+   * save it to this file when the pass ends without being stopped
+   * (`stats.placeIndex`).
+   */
+  buildPlaceIndex?: string | URL;
   /** Worker threads (default: all cores). */
   threads?: number;
   /** Stop after this many matching entities. */
@@ -365,6 +471,16 @@ export interface CommonOptions {
 /** @internal What tasks need of a class index. */
 export interface ClassIndexLike {
   readonly _id: number;
+}
+
+/** @internal What tasks need of a place index. */
+export interface PlaceIndexLike {
+  readonly _placeId: number;
+}
+
+/** @internal What tasks need of a redirect index. */
+export interface RedirectIndexLike {
+  readonly _redirectId: number;
 }
 
 /**
@@ -401,8 +517,8 @@ export interface EntityOptions extends CommonOptions {
   descriptions?: boolean;
   /** Keep aliases (default true). */
   aliases?: boolean;
-  /** Keep qualifiers (default true). */
-  qualifiers?: boolean;
+  /** Keep qualifiers (default true), or only the qualifiers of these properties (`["P585", "P580", "P582"]`). */
+  qualifiers?: boolean | string[];
   /** Keep references (default false). */
   references?: boolean;
   /** Keep deprecated statements (default false). */
@@ -415,6 +531,34 @@ export interface EntityOptions extends CommonOptions {
   batchSize?: number;
   /** Batches buffered ahead of the consumer (default 2). */
   readAhead?: number;
+  /**
+   * Call `onCheckpoint` after every this many chunks (a chunk is a bzip2
+   * block, ~900 kB of JSON, or 4 MB of plain JSON; gzip and zstd inputs
+   * have none). 1000 is about every 900 MB of JSON.
+   */
+  checkpointEvery?: number;
+  /**
+   * Where the pass can resume, called once every record before it has
+   * been consumed (the loop body ran for it). Store it; pass it as
+   * `resumeFrom` after a stop or a crash.
+   */
+  onCheckpoint?: (checkpoint: Checkpoint) => void;
+  /**
+   * Continue a pass from a checkpoint (same input, same filter): the
+   * records after it, with counters and missing ids carried over. Not with
+   * `buildClassIndex`, `buildPlaceIndex` or `referencedLabels`.
+   */
+  resumeFrom?: Checkpoint;
+  /**
+   * Also collect the labels, in these languages, of the items the
+   * matching entities' kept claims (and their qualifiers) refer to: a
+   * festival's genre, a venue's P131. `stats.referencedLabels` has them
+   * after a complete pass, or they are written as JSON to `output`. Items
+   * referenced after they stream by are read again afterwards, from the
+   * chunks that hold them only (bzip2 and plain JSON; gzip and zstd are
+   * read again whole).
+   */
+  referencedLabels?: { languages: string[]; output?: string | URL };
 }
 
 /** Options for `extract()`. */
@@ -446,8 +590,133 @@ export interface FileInfo extends ScanStats {
 export interface ClassIndexOptions {
   threads?: number;
   allowTruncated?: boolean;
+  /** Build the place index in the same pass and save it here. */
+  buildPlaceIndex?: string | URL;
   onProgress?: (p: Progress) => void;
   signal?: AbortSignal;
+}
+
+/** Options for `placeIndex()` and `PlaceIndex.build()`. */
+export interface PlaceIndexOptions {
+  threads?: number;
+  allowTruncated?: boolean;
+  /** Build the class index in the same pass and save it here. */
+  buildClassIndex?: string | URL;
+  onProgress?: (p: Progress) => void;
+  signal?: AbortSignal;
+}
+
+/** Options for {@link RedirectIndex.build} and {@link readRedirects}. */
+export interface RedirectIndexOptions extends OpenOptions {
+  /** The `redirect` table's SQL dump: `wikidatawiki-<date>-redirect.sql.gz` (a path or URL). */
+  redirects: string | URL;
+  /** The `page` table's SQL dump: `wikidatawiki-<date>-page.sql.gz`. */
+  pages: string | URL;
+  threads?: number;
+  onProgress?: (p: Progress) => void;
+  signal?: AbortSignal;
+}
+
+/** A change to an entity, from {@link liveChanges}. */
+export interface LiveChange {
+  /** The entity (`Q42`, `P31`, `L7`). */
+  id: string;
+  /** `edit`, `new` or `log` (deletions, …). */
+  kind: string;
+  /** The new revision (edits and creations). */
+  revision: number | null;
+  /** The revision it replaced (edits). */
+  oldRevision: number | null;
+  /** When (Unix time, seconds). */
+  timestamp: number;
+  user: string | null;
+  bot: boolean;
+  /** The edit summary: `/* wbmergeitems-to:0||Q2 *\/` for a merge. */
+  comment: string;
+  /** Log events: `delete`, … */
+  logType: string | null;
+  logAction: string | null;
+  /** Resume after this change: pass it as `lastEventId`. */
+  eventId: string;
+}
+
+/** Options for {@link liveChanges}. */
+export interface LiveOptions extends OpenOptions {
+  /** Only these entities (ids, or item numbers). */
+  ids?: string[] | ItemNumbers;
+  /** Resume after this change (its `eventId`). */
+  lastEventId?: string;
+  /** Start at this time (`2026-10-24T00:00:00Z`); EventStreams keeps about a week. */
+  since?: string | Date;
+  /** Namespaces (default `[0]`: items; `120` properties, `146` lexemes). */
+  namespaces?: number[];
+  /** The wiki (default `wikidatawiki`). */
+  wiki?: string;
+  /** The stream (default Wikimedia's `recentchange`). */
+  url?: string;
+  signal?: AbortSignal;
+}
+
+/** Counters of a live stream. */
+export interface LiveStats {
+  /** Events read (every wiki). */
+  events: number;
+  /** Changes handed on. */
+  changes: number;
+  /** Reconnects after dropped connections. */
+  reconnects: number;
+  lastEventId: string | null;
+}
+
+/** Progress of {@link downloadDump}. */
+export interface DownloadProgress {
+  /** Bytes on disk (resumed ones included). */
+  bytesDone: number;
+  bytesTotal: number;
+  /** Bytes fetched by this run. */
+  bytesFetched: number;
+  /** Bytes hashed (SHA-1, in file order). */
+  bytesHashed: number;
+  /** Bytes fetched from each server: the base, then the mirrors. */
+  perServer: number[];
+  elapsedMs: number;
+}
+
+/** Options for {@link downloadDump}. */
+export interface DownloadOptions extends OpenOptions {
+  /** Where to put the dump. */
+  dir: string | URL;
+  /** The dump's date (`20261012`), or `"latest"` (the default): the newest complete one. */
+  date?: string;
+  /** The dumps' directory (default `https://dumps.wikimedia.org/wikidatawiki/entities/`). */
+  base?: string;
+  /** The same directory on mirrors (`https://dumps.wikimedia.your.org/wikidatawiki/entities/`). */
+  mirrors?: string[];
+  /** Which file of the dump (default `all.json.bz2`). */
+  file?: string;
+  /** Range size in bytes (default 8 MiB). */
+  rangeSize?: number;
+  /** Check the SHA-1 (default true). */
+  verify?: boolean;
+  onProgress?: (p: DownloadProgress) => void;
+  signal?: AbortSignal;
+}
+
+/** What {@link downloadDump} did. */
+export interface DownloadResult {
+  /** The file, under its final name (only once verified). */
+  path: string;
+  date: string;
+  bytes: number;
+  bytesFetched: number;
+  /** Bytes already there (a resumed download). */
+  bytesResumed: number;
+  perServer: number[];
+  /** The verified SHA-1. */
+  sha1: string | null;
+  /** The file was there already. */
+  alreadyDone: boolean;
+  elapsedMs: number;
 }
 
 /**
@@ -459,4 +728,12 @@ export interface OpenOptions {
   userAgent?: string;
   /** HTTP reconnect attempts per position (default 8). */
   retries?: number;
+  /**
+   * Other URLs of the same file: it is then read in ranges from all of
+   * them at once (mirrors cap bandwidth per client, so two are about twice
+   * as fast), in bounded memory.
+   */
+  mirrors?: string[];
+  /** HTTP connections per server when reading in ranges (default 2; more than 1 reads in ranges without mirrors too). */
+  connections?: number;
 }

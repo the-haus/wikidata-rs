@@ -105,6 +105,7 @@ fn languages_and_sitelinks_by_country() {
             .map(|(k, v)| (k.to_string(), v.iter().map(|s| s.to_string()).collect()))
             .collect(),
         always: always.iter().map(|s| s.to_string()).collect(),
+        places: None,
     };
     let opts = EntityOptions {
         scan: scan(r#"{"ids":["Q31","Q55","Q42"]}"#),
@@ -200,7 +201,7 @@ fn the_class_index_is_built_during_another_task() {
         },
         &mut |e| match e {
             Event::Records(_) => Flow::Stop,
-            Event::Progress(_) => Flow::Continue,
+            Event::Progress(_) | Event::Checkpoint(_) => Flow::Continue,
         },
     )
     .unwrap();

@@ -11,17 +11,27 @@
 mod batch;
 mod class_index;
 mod credits;
+mod indexes;
 mod options;
 mod stream;
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use napi::bindgen_prelude::AsyncTask;
+use napi::bindgen_prelude::Uint32Array;
 use napi::{Env, JsFunction, Result, Task};
 use napi_derive::napi;
-use wikidata_export::{Dump, EntityOptions, ExtractOptions, HttpOptions, ScanOptions, WriteOptions};
+use wikidata_dump::download::{download, DownloadOptions};
+use wikidata_export::{
+    build_redirect_index, live_changes, Dump, EntityOptions, ExtractOptions, Flow, HttpOptions, Input, LiveOptions,
+    RedirectOptions, ScanOptions, WriteOptions,
+};
 
 pub use class_index::{load_class_index, take_class_index, LoadTask, NativeClassIndex};
+pub use indexes::{
+    load_place_index, load_redirect_index, take_place_index, take_redirect_index, LoadPlaces, LoadRedirects,
+    NativePlaceIndex, NativeRedirectIndex,
+};
 use options::invalid;
 pub use options::NativeOptions;
 pub use stream::NativeStream;
@@ -42,6 +52,32 @@ pub struct NativeOpenOptions {
     pub user_agent: Option<String>,
     /// HTTP reconnect attempts.
     pub retries: Option<u32>,
+    /// Other URLs of the same file, read in ranges at once.
+    pub mirrors: Option<Vec<String>>,
+    /// Connections per server when reading in ranges.
+    pub connections: Option<u32>,
+    /// Range size in bytes.
+    pub range_size: Option<f64>,
+}
+
+fn http_options(o: NativeOpenOptions) -> HttpOptions {
+    let mut http = HttpOptions::default();
+    if let Some(ua) = o.user_agent {
+        http.user_agent = ua;
+    }
+    if let Some(r) = o.retries {
+        http.retries = r;
+    }
+    if let Some(m) = o.mirrors {
+        http.mirrors = m;
+    }
+    if let Some(c) = o.connections {
+        http.connections = Some(c.max(1) as usize);
+    }
+    if let Some(r) = o.range_size.filter(|r| r.is_finite() && *r >= 1.0) {
+        http.range_size = r as u64;
+    }
+    http
 }
 
 /// An open dump.
@@ -77,13 +113,17 @@ impl NativeReader {
     /// Stream matching entities to `callback(event)`.
     #[napi(ts_args_type = "options: NativeOptions, callback: (event: unknown) => void")]
     pub fn entities(&self, options: NativeOptions, callback: JsFunction) -> Result<NativeStream> {
+        let places = options::place_index(&options)?;
+        let labels = options::referenced_labels(&options)?;
+        let labels_output = labels.as_ref().and_then(|(_, o)| o.clone());
         let opts = EntityOptions {
             scan: options::scan(&options)?,
             model: options::model(&options)?,
             json: options.json.unwrap_or(true),
             summary_only: true,
-            languages_by: options::by_claim(&options.languages_by_json, "languages")?,
-            sitelinks_by: options::by_claim(&options.sitelinks_by_json, "sitelinks")?,
+            languages_by: options::by_claim(&options.languages_by_json, "languages", places.clone())?,
+            sitelinks_by: options::by_claim(&options.sitelinks_by_json, "sitelinks", places)?,
+            referenced_labels: labels.map(|(l, _)| l),
         };
         let names = opts
             .scan
@@ -103,7 +143,16 @@ impl NativeReader {
         let dump = self.dump.clone();
         Ok(stream::spawn_entities(cb, batch_size, read_ahead, names, move |sink| {
             let stats = wikidata_export::entities(&dump, &opts, sink).map_err(|e| e.to_string())?;
-            to_value(&stats)
+            let mut v = to_value(&stats)?;
+            if let Some(labels) = &stats.referenced_labels {
+                let json = serde_json::to_string(labels).map_err(|e| e.to_string())?;
+                match &labels_output {
+                    Some(path) => std::fs::write(path, json).map_err(|e| format!("{path}: {e}"))?,
+                    // Parsed in JS when read.
+                    None => v["referencedLabelsJson"] = json.into(),
+                }
+            }
+            Ok(v)
         }))
     }
 
@@ -140,6 +189,33 @@ impl NativeReader {
         }))
     }
 
+    /// Build the place index; the end event's stats carry a `token` for
+    /// `takePlaceIndex` (with `classIndexOutput`, the class index is built
+    /// and saved in the same pass).
+    #[napi(ts_args_type = "options: NativeOptions, callback: (event: unknown) => void")]
+    pub fn build_place_index(&self, options: NativeOptions, callback: JsFunction) -> Result<NativeStream> {
+        let opts = ScanOptions {
+            filter: None,
+            ..options::scan(&NativeOptions {
+                threads: options.threads,
+                allow_truncated: options.allow_truncated,
+                class_index_output: options.class_index_output.clone(),
+                ..Default::default()
+            })?
+        };
+        let cb = stream::callback(&callback)?;
+        let dump = self.dump.clone();
+        Ok(stream::spawn_task(cb, move |progress| {
+            let (index, stats) =
+                wikidata_export::build_place_index(&dump, &opts, progress).map_err(|e| e.to_string())?;
+            let mut v = to_value(&stats)?;
+            v["items"] = index.len().into();
+            v["sets"] = index.sets().into();
+            v["token"] = indexes::places().leave(index).into();
+            Ok(v)
+        }))
+    }
+
     /// Build the class index; the end event's stats carry a `token` for
     /// `takeClassIndex`.
     #[napi(ts_args_type = "options: NativeOptions, callback: (event: unknown) => void")]
@@ -150,6 +226,7 @@ impl NativeReader {
             ..options::scan(&NativeOptions {
                 threads: options.threads,
                 allow_truncated: options.allow_truncated,
+                place_index_output: options.place_index_output.clone(),
                 ..Default::default()
             })?
         };
@@ -191,15 +268,174 @@ impl Task for OpenTask {
 /// Open a dump: a path or an http(s) URL.
 #[napi(ts_return_type = "Promise<NativeReader>")]
 pub fn open(input: String, options: Option<NativeOpenOptions>) -> AsyncTask<OpenTask> {
-    let o = options.unwrap_or_default();
-    let mut http = HttpOptions::default();
-    if let Some(ua) = o.user_agent {
-        http.user_agent = ua;
-    }
-    if let Some(r) = o.retries {
-        http.retries = r;
-    }
+    let http = http_options(options.unwrap_or_default());
     AsyncTask::new(OpenTask { input, http })
+}
+
+/// Options for `buildRedirectIndex`.
+#[napi(object)]
+#[derive(Default)]
+pub struct NativeRedirectOptions {
+    /// The `redirect` table's SQL dump (path or URL).
+    pub redirects: String,
+    /// The `page` table's SQL dump (path or URL).
+    pub pages: String,
+    /// Worker threads.
+    pub threads: Option<u32>,
+    /// HTTP options.
+    pub open: Option<NativeOpenOptions>,
+}
+
+/// Build a redirect index from the SQL dumps; the end event's stats carry
+/// a `token` for `takeRedirectIndex`.
+#[napi(ts_args_type = "options: NativeRedirectOptions, callback: (event: unknown) => void")]
+pub fn build_redirects(options: NativeRedirectOptions, callback: JsFunction) -> Result<NativeStream> {
+    let cb = stream::callback(&callback)?;
+    let opts = RedirectOptions {
+        threads: options.threads.unwrap_or(0) as usize,
+        http: http_options(options.open.unwrap_or_default()),
+    };
+    let (r, p) = (Input::parse(&options.redirects), Input::parse(&options.pages));
+    Ok(stream::spawn_task(cb, move |progress| {
+        let (index, stats) = build_redirect_index(&r, &p, &opts, progress).map_err(|e| e.to_string())?;
+        let mut v = to_value(&stats)?;
+        v["token"] = indexes::redirects().leave(index).into();
+        Ok(v)
+    }))
+}
+
+/// Options for `liveChanges`.
+#[napi(object)]
+#[derive(Default)]
+pub struct NativeLiveOptions {
+    /// Only these items (numbers).
+    pub items: Option<Uint32Array>,
+    /// Only these entities (any kind).
+    pub ids: Option<Vec<String>>,
+    /// Resume after this event id.
+    pub last_event_id: Option<String>,
+    /// Start at this time.
+    pub since: Option<String>,
+    /// Namespaces (default `[0]`).
+    pub namespaces: Option<Vec<i64>>,
+    /// The wiki (default `wikidatawiki`).
+    pub wiki: Option<String>,
+    /// The stream's URL.
+    pub url: Option<String>,
+    /// Batches buffered ahead of the consumer.
+    pub read_ahead: Option<u32>,
+    /// HTTP options.
+    pub open: Option<NativeOpenOptions>,
+}
+
+/// Stream live changes; batches are JSON arrays of changes.
+#[napi(ts_args_type = "options: NativeLiveOptions, callback: (event: unknown) => void")]
+pub fn live(options: NativeLiveOptions, callback: JsFunction) -> Result<NativeStream> {
+    let cb = stream::callback(&callback)?;
+    let mut opts = LiveOptions {
+        last_event_id: options.last_event_id,
+        since: options.since,
+        http: http_options(options.open.unwrap_or_default()),
+        ..Default::default()
+    };
+    if let Some(ns) = options.namespaces {
+        opts.namespaces = ns;
+    }
+    if let Some(w) = options.wiki {
+        opts.wiki = w;
+    }
+    if let Some(u) = options.url {
+        opts.url = u;
+    }
+    if options.items.is_some() || options.ids.is_some() {
+        let b = wikidata_filter::IdSetBuilder::new();
+        if let Some(items) = &options.items {
+            let mut keys: Vec<i64> = items.iter().map(|&n| i64::from(n)).collect();
+            keys.sort_unstable();
+            b.insert_all(&keys);
+        }
+        for id in options.ids.iter().flatten() {
+            b.insert(wikidata_filter::id_key(id).ok_or_else(|| invalid(format!("ids: not an entity id: {id:?}")))?);
+        }
+        opts.ids = Some(std::sync::Arc::new(b.freeze()));
+    }
+    Ok(stream::spawn_json(
+        cb,
+        options.read_ahead.unwrap_or(4),
+        move |send, stop| {
+            let stats = live_changes(&opts, stop, &mut |changes| match serde_json::to_string(&changes) {
+                Ok(json) => send(json),
+                Err(_) => Flow::Stop,
+            })
+            .map_err(|e| e.to_string())?;
+            to_value(&stats)
+        },
+    ))
+}
+
+/// Options for `downloadDump`.
+#[napi(object)]
+#[derive(Default)]
+pub struct NativeDownloadOptions {
+    /// The dumps' directory.
+    pub base: Option<String>,
+    /// Mirrors of it.
+    pub mirrors: Option<Vec<String>>,
+    /// The date (default: the newest complete dump).
+    pub date: Option<String>,
+    /// The file of the dump (default `all.json.bz2`).
+    pub file: Option<String>,
+    /// Where to put it.
+    pub dir: String,
+    /// Check the SHA-1 (default true).
+    pub verify: Option<bool>,
+    /// HTTP options (connections per server, range size, …).
+    pub open: Option<NativeOpenOptions>,
+}
+
+/// Download a dump; status events carry its progress.
+#[napi(ts_args_type = "options: NativeDownloadOptions, callback: (event: unknown) => void")]
+pub fn download_dump(options: NativeDownloadOptions, callback: JsFunction) -> Result<NativeStream> {
+    let cb = stream::callback(&callback)?;
+    let mut opts = DownloadOptions {
+        dir: options.dir.into(),
+        http: http_options(options.open.unwrap_or_default()),
+        verify: options.verify.unwrap_or(true),
+        date: options.date,
+        mirrors: options.mirrors.unwrap_or_default(),
+        ..Default::default()
+    };
+    if let Some(b) = options.base {
+        opts.base = b;
+    }
+    if let Some(f) = options.file {
+        opts.file = f;
+    }
+    Ok(stream::spawn_status(cb, move |status| {
+        let stats = download(&opts, &mut |p| {
+            let v = serde_json::json!({
+                "bytesDone": p.bytes_done,
+                "bytesTotal": p.bytes_total,
+                "bytesFetched": p.bytes_fetched,
+                "bytesHashed": p.bytes_hashed,
+                "perServer": p.per_server,
+                "elapsedMs": p.elapsed_ms,
+            });
+            status(v) == Flow::Continue
+        })
+        .map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({
+            "path": stats.path.display().to_string(),
+            "date": stats.date,
+            "bytes": stats.bytes,
+            "bytesFetched": stats.bytes_fetched,
+            "bytesResumed": stats.bytes_resumed,
+            "perServer": stats.per_server,
+            "sha1": stats.sha1,
+            "alreadyDone": stats.already_done,
+            "elapsedMs": stats.elapsed_ms,
+        }))
+    }))
 }
 
 /// The library version.

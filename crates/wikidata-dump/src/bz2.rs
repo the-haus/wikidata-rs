@@ -255,6 +255,8 @@ pub struct Scanner<R> {
     eof: bool,
     done: bool,
     read_size: usize,
+    /// Resuming: the bit the first block must start at.
+    first: Option<u64>,
     /// Pieces cut so far.
     pub pieces: u64,
 }
@@ -277,6 +279,25 @@ impl<R: Read> Scanner<R> {
             eof: false,
             done: false,
             read_size: 4 << 20,
+            first: None,
+            pieces: 0,
+        })
+    }
+
+    /// Continue scanning a file at bit `bit`, where a block starts (a
+    /// [`Blocks`] position); `reader` is positioned at byte `bit / 8`.
+    pub fn resume(reader: R, bit: u64) -> Result<Self> {
+        Ok(Self {
+            reader,
+            buf: Vec::new(),
+            base_bit: bit / 8 * 8,
+            scan_from: 0,
+            found: Default::default(),
+            current: None,
+            eof: false,
+            done: false,
+            read_size: 4 << 20,
+            first: Some(bit),
             pieces: 0,
         })
     }
@@ -329,6 +350,17 @@ impl<R: Read> Scanner<R> {
                 return Ok(None);
             }
             if let Some(m) = self.found.pop_front() {
+                if let Some(first) = self.first {
+                    if m.bit < first {
+                        continue;
+                    }
+                    self.first = None;
+                    if m.bit != first || m.kind != PieceKind::Block {
+                        return Err(DumpError::Format(format!(
+                            "no bzip2 block starts at bit {first} (a resume point of another file?)"
+                        )));
+                    }
+                }
                 let prev = self.current.replace(m);
                 match prev {
                     Some(p) => return Ok(Some(self.cut(p, m.bit))),
@@ -354,6 +386,9 @@ impl<R: Read> Scanner<R> {
                         "the bzip2 stream ends inside a block (at byte {} of the compressed input)",
                         m.bit / 8
                     ))),
+                    None if self.first.is_some() => Err(DumpError::Format(
+                        "no bzip2 block at the resume point (a resume point of another file?)".into(),
+                    )),
                     None => Err(DumpError::Truncated("the bzip2 stream has no blocks".into())),
                 };
             }
@@ -510,6 +545,9 @@ pub struct Blocks<I> {
     pending: std::collections::VecDeque<Result<Decoded>>,
     /// Counters.
     pub stats: Bz2Stats,
+    /// Where the block last returned starts, and the counts before it:
+    /// reading can resume there ([`Scanner::resume`], [`Blocks::resumed`]).
+    pub last_start: Option<crate::BlockStart>,
     failed: bool,
 }
 
@@ -521,15 +559,31 @@ impl<I: Iterator<Item = Result<Decoded>>> Blocks<I> {
             combined: 0,
             pending: Default::default(),
             stats: Bz2Stats::default(),
+            last_start: None,
             failed: false,
         }
+    }
+
+    /// Continue a stream whose blocks before this point combine to `crc`,
+    /// after `blocks` blocks and `streams` streams.
+    pub fn resumed(mut self, crc: u32, blocks: u64, streams: u64) -> Self {
+        self.combined = crc;
+        self.stats.blocks = blocks;
+        self.stats.streams = streams;
+        self
     }
 
     fn pull(&mut self) -> Option<Result<Decoded>> {
         self.pending.pop_front().or_else(|| self.inner.next())
     }
 
-    fn block(&mut self, data: Vec<u8>, crc: u32) -> Vec<u8> {
+    fn block(&mut self, data: Vec<u8>, crc: u32, bit: u64) -> Vec<u8> {
+        self.last_start = Some(crate::BlockStart {
+            bit,
+            crc: self.combined,
+            blocks: self.stats.blocks,
+            streams: self.stats.streams,
+        });
         self.combined = self.combined.rotate_left(1) ^ crc;
         self.stats.blocks += 1;
         data
@@ -560,7 +614,7 @@ impl<I: Iterator<Item = Result<Decoded>>> Iterator for Blocks<I> {
                 Err(e) => return self.fail(e),
             };
             match d {
-                Decoded::Block { data, crc, .. } => return Some(Ok(self.block(data, crc))),
+                Decoded::Block { data, crc, piece } => return Some(Ok(self.block(data, crc, piece.bit_offset))),
                 Decoded::End(piece) => {
                     let crc = piece.crc().unwrap_or(0);
                     if crc != self.combined {
@@ -596,7 +650,7 @@ impl<I: Iterator<Item = Result<Decoded>>> Iterator for Blocks<I> {
                         Some(data) => {
                             self.stats.false_magics += taken.len() as u64;
                             let crc = joined.crc().unwrap_or(0);
-                            return Some(Ok(self.block(data, crc)));
+                            return Some(Ok(self.block(data, crc, joined.bit_offset)));
                         }
                         None => {
                             let at = joined.bit_offset / 8;

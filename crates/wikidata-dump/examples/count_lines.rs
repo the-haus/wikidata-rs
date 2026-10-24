@@ -15,6 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let opts = ReadOptions {
         threads,
         allow_truncated: args.iter().any(|a| a == "--allow-truncated"),
+        ..Default::default()
     };
     let t = Instant::now();
     let dump = Dump::open(path.as_str())?;

@@ -606,7 +606,11 @@ impl<'de> Visitor<'de> for StatementSeed<'_> {
             match k {
                 StatementKey::Mainsnak => value = map.next_value_seed(SnakSeed)?,
                 StatementKey::Rank => rank = map.next_value_seed(With(parse_rank))?,
-                StatementKey::Qualifiers if self.full && o.qualifiers => qualifiers = map.next_value_seed(SnaksSeed)?,
+                StatementKey::Qualifiers if self.full && o.qualifiers => {
+                    qualifiers = map.next_value_seed(SnaksSeed {
+                        keep: self.c.qualifier_properties.as_ref(),
+                    })?
+                }
                 StatementKey::References if self.full && o.references => {
                     references = map.next_value_seed(ReferencesSeed)?
                 }
@@ -622,10 +626,13 @@ impl<'de> Visitor<'de> for StatementSeed<'_> {
     }
 }
 
-/// Property → snaks (qualifiers, reference snaks).
-struct SnaksSeed;
+/// Property → snaks (qualifiers, reference snaks), only `keep`'s
+/// properties when given.
+struct SnaksSeed<'a> {
+    keep: Option<&'a rustc_hash::FxHashSet<u32>>,
+}
 
-impl<'de> DeserializeSeed<'de> for SnaksSeed {
+impl<'de> DeserializeSeed<'de> for SnaksSeed<'_> {
     type Value = Snaks;
     fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
         // Empty maps are written as `[]`.
@@ -633,7 +640,7 @@ impl<'de> DeserializeSeed<'de> for SnaksSeed {
     }
 }
 
-impl<'de> Visitor<'de> for SnaksSeed {
+impl<'de> Visitor<'de> for SnaksSeed<'_> {
     type Value = Snaks;
     fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.write_str("snaks by property")
@@ -644,7 +651,10 @@ impl<'de> Visitor<'de> for SnaksSeed {
     }
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
         let mut out = Vec::new();
-        while let Some(p) = map.next_key_seed(With(|k: &str| Pid::parse(k)))? {
+        let keep = self.keep;
+        while let Some(p) = map.next_key_seed(With(|k: &str| {
+            Pid::parse(k).filter(|p| keep.is_none_or(|s| s.contains(&p.0)))
+        }))? {
             match p {
                 Some(p) => {
                     let vs: Vec<Value> = map.next_value_seed(SnakListSeed)?;
@@ -727,7 +737,7 @@ impl<'de> Visitor<'de> for ReferenceSeed {
         let mut snaks = Map::default();
         while let Some(is_snaks) = map.next_key_seed(With(|k: &str| k == "snaks"))? {
             if is_snaks {
-                snaks = map.next_value_seed(SnaksSeed)?;
+                snaks = map.next_value_seed(SnaksSeed { keep: None })?;
             } else {
                 ignore(&mut map)?;
             }

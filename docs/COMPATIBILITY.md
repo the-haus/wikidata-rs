@@ -12,7 +12,10 @@ What of Wikidata's JSON dumps is read, and how it is normalised.
 | `.json.gz` (`latest-all.json.gz`), multi-member gzip | yes, one thread |
 | `.json.zst`, multi-frame zstd | yes, one thread |
 | plain `.json`, JSON lines (`.jsonl`, `.ndjson`) | yes |
-| an `http(s)://` URL of any of these | yes, streamed and resumed on dropped connections |
+| an `http(s)://` URL of any of these | yes, streamed and resumed on dropped connections; with mirrors, read in ranges from all of them |
+| incremental dumps (`wikidatawiki-YYYYMMDD-pages-meta-hist-incr.xml.bz2`), any MediaWiki XML export of entity pages | yes: one line per entity page, its newest revision, with `lastrevid` and `modified` added; other content models skipped; redirect revisions reported as merges |
+| the SQL dumps' `redirect` and `page` tables (`.sql.gz`, `.sql.bz2`, `.sql.zst`, `.sql`) | for the redirect index only (`wikidata redirects`, `RedirectIndex.build`); columns found by name from `CREATE TABLE` |
+| EventStreams (`recentchange`) | for live changes (`wikidata live`, `liveChanges`) |
 | truncated files (partial downloads) | an error; or, with `allowTruncated` / `--allow-truncated`, read up to the last whole entity and flagged as `truncated` |
 | randomised bzip2 blocks (bzip2 < 0.9.5) | yes, through libbzip2 |
 | `.json` dumps with several entities on one line, or pretty-printed | no: one entity per line |
@@ -20,7 +23,13 @@ What of Wikidata's JSON dumps is read, and how it is normalised.
 
 The array layout is the dumps' own: `[`, one entity per line followed by
 a comma except the last, `]`. An array that does not end with `]` is
-truncated. Empty lines are skipped.
+truncated. Empty lines are skipped. An XML export that does not end with
+`</mediawiki>` is truncated too (its whole pages are read with
+`allowTruncated`).
+
+Resuming (checkpoints) works on bzip2 and plain JSON, from a file or a URL:
+a bzip2 pass resumes at the block where its first unread line starts,
+carrying the stream's combined CRC on, so every CRC is still checked.
 
 ## Entities
 

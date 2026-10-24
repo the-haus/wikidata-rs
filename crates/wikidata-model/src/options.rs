@@ -26,6 +26,10 @@ pub struct ModelOptions {
     pub aliases: bool,
     /// Keep qualifiers (default true).
     pub qualifiers: bool,
+    /// With `qualifiers`, keep only the qualifiers of these properties
+    /// (`[P585, P580, P582]`); the others are skipped while parsing.
+    /// `None`: all.
+    pub qualifier_properties: Option<Vec<Pid>>,
     /// Keep references (default false).
     pub references: bool,
     /// Keep deprecated statements (default false: dropped).
@@ -47,6 +51,7 @@ impl Default for ModelOptions {
             descriptions: true,
             aliases: true,
             qualifiers: true,
+            qualifier_properties: None,
             references: false,
             deprecated: false,
             best_rank: false,
@@ -87,6 +92,7 @@ pub struct Compiled {
     pub(crate) opts: ModelOptions,
     pub(crate) fallback: Vec<String>,
     pub(crate) properties: Option<rustc_hash::FxHashSet<u32>>,
+    pub(crate) qualifier_properties: Option<rustc_hash::FxHashSet<u32>>,
     pub(crate) slots: FxHashMap<u32, Slot>,
     pub(crate) backend: crate::Backend,
 }
@@ -99,6 +105,10 @@ impl Compiled {
             .clone()
             .unwrap_or_else(|| vec!["en".to_string(), "mul".to_string()]);
         let properties = opts.properties.as_ref().map(|p| p.iter().map(|p| p.0).collect());
+        let qualifier_properties = opts
+            .qualifier_properties
+            .as_ref()
+            .map(|p| p.iter().map(|p| p.0).collect());
         let mut slots = FxHashMap::default();
         if opts.derived {
             for (p, s) in DERIVED {
@@ -124,6 +134,7 @@ impl Compiled {
             opts,
             fallback,
             properties,
+            qualifier_properties,
             slots,
             backend,
         }

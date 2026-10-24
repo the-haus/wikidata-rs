@@ -39,8 +39,10 @@ for await (const e of dump.entities({ filter: { claim: "P17=Q55" }, languages: [
 - [Versioning and releases](#versioning-and-releases)
 - [Performance](#performance)
 - [Guide](#guide)
-  - [Entities](#entities) · [Filters](#filters) · [Subclasses](#subclasses) · [Subsets](#subsets)
-  - [File statistics](#file-statistics) · [URLs](#urls) · [Streams](#streams) · [Memory](#memory)
+  - [Entities](#entities) · [Filters](#filters) · [Subclasses](#subclasses) · [Places](#places) · [Subsets](#subsets)
+  - [Refreshing what you have](#refreshing-what-you-have): [known revisions](#known-revisions) · [merges and deletions](#merges-and-deletions) · [checkpoints](#checkpoints) · [labels of referenced items](#labels-of-referenced-items)
+  - [Between weekly dumps](#between-weekly-dumps): [incremental dumps](#incremental-dumps) · [live changes](#live-changes)
+  - [File statistics](#file-statistics) · [URLs and mirrors](#urls-and-mirrors) · [Downloads](#downloads) · [Streams](#streams) · [Memory](#memory)
 - [API reference](#api-reference)
 - [TypeScript](#typescript)
 - [Errors](#errors)
@@ -69,8 +71,17 @@ for await (const e of dump.entities({ filter: { claim: "P17=Q55" }, languages: [
   when you read it.
 - **Subsets.** `extract()` keeps a small `.jsonl.zst` of what you need
   instead of the 103 GB dump, readable again by `openDump`.
+- **Refreshes that touch only what changed.** Known revisions skip
+  unchanged items before parsing; merges and deletions come from the SQL
+  dumps' redirects; a stopped pass resumes from a checkpoint; the labels of
+  referenced items come with the pass.
+- **Places.** A place index finds every item in a country through its
+  P131 chain, not only the ones with a P17.
+- **Fresher than the weekly dump.** The daily incremental dumps read like
+  the dump itself, and live changes stream from Wikimedia's EventStreams.
 - **Files or URLs.** Downloads stream without a temporary file and resume
-  dropped connections.
+  dropped connections; several mirrors are read at once, and
+  `downloadDump()` fetches, verifies and resumes a local copy.
 - **Bounded memory.** The reader never gets more than `readAhead` batches
   ahead of your code; `AbortSignal` stops it and its threads.
 
@@ -180,6 +191,7 @@ fields. Benchmarks for the CLI and the method are in the repository's
 | `website` | P856 | |
 | `externalIds` | see `EXTERNAL_IDS` | `{ musicbrainzArtist, discogsArtist, osmRelation, geonames, viaf, … }` |
 | `matchedBy` | the filter | the [named filters](#named-filters) that match the entity, `[]` without names |
+| `mergedFrom` | `redirects` | the requested ids [merged into](#merges-and-deletions) this entity, `[]` otherwise |
 | `entity` | | the full `Entity`, parsed on first access |
 | `json` | | its JSON text |
 
@@ -191,7 +203,7 @@ dump.entities({
   languages: ["nl", "en", "mul"], // labels/descriptions/aliases kept, and the label fallback order
   sitelinks: ["nlwiki", "enwiki"], // default: all
   properties: ["P31", "P17", "P625", "P571"], // claims kept (default: all)
-  qualifiers: true,                // default
+  qualifiers: true,                // default; or ["P585", "P580", "P582"]: only these
   references: false,               // default
   deprecated: false,               // default: deprecated statements are dropped
   bestRank: false,                 // true: only each property's preferred statements, when it has any
@@ -245,6 +257,8 @@ see the repository's
 { instanceOf: ["Q5"] }                          // P31 one of these
 { instanceOf: { classes: ["Q868557"], subclasses: true } } // or a subclass (needs classIndex)
 { sitelink: "nlwiki" }
+{ inCountry: "Q55" }                            // by P17, the P131 chain or P159 (needs placeIndex)
+{ ids: known, revisions: knownRevisions }       // only the ones that changed (see Known revisions)
 { any: [{ claim: "P17=Q55" }, { hasProperty: "P434" }] }
 [{ type: "item" }, { not: { sitelink: "enwiki" } }] // an array, or several keys: all of them
 ```
@@ -295,7 +309,7 @@ filter. `matchedBy` lists them in the order the filter names them.
 
 With `ids` in the filter (anywhere in it), `stats.missingIds` lists the
 requested ids the dump does not hold: deleted, or merged into another item
-(follow the redirect with the Wikidata API). It is only set after a
+(a [redirect index](#merges-and-deletions) tells which). It is only set after a
 complete pass, not one stopped by `limit`, `close()`, a signal, or
 truncated with `allowTruncated`.
 
@@ -354,6 +368,39 @@ stats.classIndex; // { path: "wikidata-20261012-classes.wdc", classes: …, edge
 // the next pass: classIndex: await ClassIndex.load("wikidata-20261012-classes.wdc")
 ```
 
+### Places
+
+Discovery by country misses every item that names only its place: a
+venue whose P131 is a village, with no P17. A place index knows each
+item's countries: its P17, else the country of its P131 places, followed up
+the chain (a village, its municipality, its province…; cycle-safe, at most
+24 steps), and the country of its P159 (headquarters). It is built in one
+pass that parses only those three properties, saved as a small file:
+
+```ts
+import { PlaceIndex } from "@wikidata-rs/node";
+
+const placeIndex = await PlaceIndex.build("wikidata-20261012-all.json.bz2");
+placeIndex.save("places.wdp"); // later: await PlaceIndex.load("places.wdp")
+placeIndex.countryOf("Q9003"); // ["Q55"]: a venue in a village in a Dutch municipality
+placeIndex.countriesOf(Uint32Array.of(9003, 9004)); // [["Q55"], ["Q55", "Q145"]]
+
+for await (const e of dump.entities({ filter: { inCountry: ["Q55", "Q31"] }, placeIndex })) {
+  // every item in the Netherlands or Belgium, by P17, P131 or P159
+}
+```
+
+Items the index knows are decided from their id, before parsing; an item
+newer than the index is decided from its own claims, its places looked up
+in the index. With a `placeIndex`, `languages` and `sitelinks` rules
+(`{ by: "P17", map, always }`) also take the country from it for an item
+whose own claims choose nothing, so a village gets its country's language.
+
+`buildPlaceIndex: "places.wdp"` builds it as a by-product of any pass, like
+`buildClassIndex` (both at once in one pass: `ClassIndex.build(input,
+{ buildPlaceIndex })` or `PlaceIndex.build(input, { buildClassIndex })`).
+`stats.placeIndex` reports `{ path, items, sets, bytes }`.
+
 ### Subsets
 
 Keep the part of Wikidata you need instead of the 103 GB dump:
@@ -374,6 +421,147 @@ any options). The output format follows the file name: `.jsonl.zst`
 `.jsonl.gz`, `.json`, `.jsonl`. Compression runs on every core; `level`
 sets it.
 
+### Refreshing what you have
+
+A weekly refresh reads the items you already have from the new dump. Four
+options make it read and hand over only what is needed.
+
+#### Known revisions
+
+Give the revision you have of each id (its `lastrevid`), and the entities
+that did not change since are skipped before they are parsed: they never
+reach JS, but count as found (they are not in `missingIds`), and
+`stats.unchanged` counts them.
+
+```ts
+// Parallel arrays (typed arrays or plain ones), or a map.
+const stream = dump.entities({ filter: { ids: knownItems, revisions: knownRevisions } });
+const stream2 = dump.entities({ filter: { ids: new Map([["Q42", 2553637656]]) } });
+for await (const e of stream) update(e); // only what changed
+(await stream.stats).unchanged;
+```
+
+Revision ids pass 2^32: give them as a `Float64Array`, a `BigUint64Array`
+or plain numbers. The revision is read from the line's tail, without
+parsing it.
+
+#### Merges and deletions
+
+The JSON dump leaves merged items out, so a missing id is either merged
+into another item, deleted, or newer than the dump. The SQL dumps of the
+same date know the merges (`wikidatawiki-<date>-redirect.sql.gz` and
+`…-page.sql.gz`); a `RedirectIndex` joins them:
+
+```ts
+import { RedirectIndex, readRedirects } from "@wikidata-rs/node";
+
+const base = "https://dumps.wikimedia.org/wikidatawiki/20261020/wikidatawiki-20261020";
+const redirects = await RedirectIndex.build({ redirects: `${base}-redirect.sql.gz`, pages: `${base}-page.sql.gz` });
+redirects.save("redirects.wdr"); // later: await RedirectIndex.load("redirects.wdr")
+redirects.resolve("Q1");         // "Q2", or null
+for await (const { from, to } of readRedirects({ redirects: "…-redirect.sql.gz", pages: "…-page.sql.gz" })) { /* … */ }
+
+const stream = dump.entities({ filter: { ids: known }, redirects });
+for await (const e of stream) e.mergedFrom; // ["Q1"]: the item Q1 was merged into came through
+const { merged, deleted, newer } = await stream.stats;
+// merged: [{ from: "Q1", to: "Q2", inDump: true }], deleted: ["Q3"], newer: ["Q999999999"]
+```
+
+With a redirect index, `ids` also match the items their ids were merged
+into (so their new entity arrives in the same pass), and the missing ids
+are sorted: **merged** (with the target, and whether it was in the dump),
+**deleted** (neither in the dump nor redirected), or **newer** than the
+dump (above its highest item id). The index costs 8 bytes a redirect;
+building it streams the page table (~4 GB compressed) once.
+
+#### Checkpoints
+
+A full pass takes long; a deploy or a crash should not mean starting
+over. With `checkpointEvery`, `onCheckpoint` receives a checkpoint after
+every that many chunks (a bzip2 block, ~900 kB of JSON), once every record
+before it went through your loop body. Store it (it is JSON-safe), and
+pass it as `resumeFrom` to continue with exactly the records after it:
+
+```ts
+const stream = dump.entities({
+  filter,
+  checkpointEvery: 1000, // about every 900 MB of JSON
+  onCheckpoint: (cp) => db.save("wikidata-pass", cp),
+  resumeFrom: await db.load("wikidata-pass"), // undefined the first time
+});
+for await (const e of stream) await ingest(e);
+```
+
+The counters and the ids found so far (for `missingIds`) carry over, so a
+resumed pass ends with the same stats as an uninterrupted one. bzip2 and
+plain JSON inputs can resume (files and URLs); gzip and zstd have no
+checkpoints. A checkpoint names its input and its filter: resuming with
+another is an error. `stream.checkpoint` is the last one reached.
+
+#### Labels of referenced items
+
+The values you show often point at other items: a festival's genre, a
+venue's operator, its P131. `referencedLabels` collects their labels, in
+the languages you ask, and only theirs:
+
+```ts
+const stream = dump.entities({
+  filter,
+  properties: ["P31", "P131", "P136"],
+  referencedLabels: { languages: ["en", "nl"] }, // or { languages, output: "labels.json" }
+});
+for await (const e of stream) ingest(e);
+const { referencedLabels, labels } = await stream.stats;
+referencedLabels; // { Q9002: { en: "Schaesberg", nl: "Schaesberg" }, Q9011: { en: "rock music", nl: "rockmuziek" } }
+labels;           // { referenced, labelled, duringPass, chunksReread, chunks }
+```
+
+The items are those the kept claims (and their qualifiers) refer to.
+Items that come after their first reference are labelled during the pass;
+the others (most: new items refer to old ones) are read afterwards from the
+chunks that hold them only: the dump's ids are nearly sorted, and the pass
+noted which ranges of ids each chunk holds. gzip and zstd inputs, which
+cannot be read from the middle, are read again whole.
+
+### Between weekly dumps
+
+#### Incremental dumps
+
+Wikimedia publishes the day's revisions every day
+(`https://dumps.wikimedia.org/other/incr/wikidatawiki/<date>/wikidatawiki-<date>-pages-meta-hist-incr.xml.bz2`,
+~300 MB). They read like a dump, through every filter and option:
+
+```ts
+const day = "https://dumps.wikimedia.org/other/incr/wikidatawiki/20261022/wikidatawiki-20261022-pages-meta-hist-incr.xml.bz2";
+const stream = streamEntities(day, { filter: { ids: knownWithRevisions } });
+for await (const e of stream) update(e); // each changed entity once, at its newest revision
+(await stream.stats).redirects;          // the day's merges: [{ from: "Q1", to: "Q2" }]
+```
+
+Each entity page comes once, at its newest revision in the file, with
+`lastrevid` and `modified` filled in; discussion pages are skipped.
+
+#### Live changes
+
+`liveChanges()` streams the entities edited on Wikidata as they are edited
+(Wikimedia's EventStreams), filtered natively by ids. Read the changed
+ones again by id. Each change has an `eventId`: store the last one, and
+pass it as `lastEventId` to resume right after it; dropped connections
+resume the same way, so nothing is missed or read twice.
+
+```ts
+import { liveChanges } from "@wikidata-rs/node";
+
+for await (const c of liveChanges({ ids: knownItems, lastEventId: await db.load("live") })) {
+  // { id: "Q42", kind: "edit", revision, oldRevision, timestamp, user, bot, comment, eventId }
+  queue.push(c.id);
+  await db.save("live", c.eventId);
+}
+```
+
+`since: "2026-10-24T00:00:00Z"` starts at a time instead (EventStreams
+keeps about a week); `namespaces: [0, 120]` adds properties.
+
 ### File statistics
 
 ```ts
@@ -384,7 +572,7 @@ info.largest;  // { id, bytes }
 info.bytesIn; info.bytesOut; info.blocks; info.elapsedMs;
 ```
 
-### URLs
+### URLs and mirrors
 
 `openDump(url)` streams `http://` and `https://` URLs without a temporary
 file. When the connection drops, it reconnects with a `Range` request (and
@@ -407,6 +595,46 @@ await ClassIndex.build(url, http);
 A truncated download is an error; `allowTruncated: true` reads a partial
 file up to its last whole entity and sets `stats.truncated`.
 
+Mirrors cap bandwidth per client, not per connection (Wikimedia: about
+5–8 MB/s, two connections allowed; your.org about 7 MB/s), so one
+connection reads the 103 GB dump in about four hours. With `mirrors`, the
+file is read in ranges from every server at once (`connections` each,
+default 2), in file order and bounded memory: about the sum of their
+speeds.
+
+```ts
+const url = "https://dumps.wikimedia.org/wikidatawiki/entities/20261012/wikidata-20261012-all.json.bz2";
+const mirror = "https://dumps.wikimedia.your.org/wikidatawiki/entities/20261012/wikidata-20261012-all.json.bz2";
+streamEntities(url, { mirrors: [mirror], filter });
+```
+
+Every range is checked (`Content-Range`, `If-Range`); the servers must
+agree on the file's size, and a mirror that keeps failing hands its ranges
+to the others.
+
+### Downloads
+
+`downloadDump()` keeps a local copy: the newest complete dump (the newest
+date whose `sha1sums.txt` lists it), fetched in ranges from the base and
+every mirror at once, written in place into one preallocated `.part` file,
+SHA-1-checked as it arrives, and renamed to its final name only once
+verified. Run it again after a stop or a crash and it resumes.
+
+```ts
+import { downloadDump } from "@wikidata-rs/node";
+
+const { path, sha1, bytesResumed } = await downloadDump({
+  dir: "/data/dumps",
+  date: "latest", // or "20261012"
+  mirrors: ["https://dumps.wikimedia.your.org/wikidatawiki/entities/"],
+  userAgent: "Festimap/1.0 (ops@example.org)",
+  onProgress: (p) => console.log(`${((100 * p.bytesDone) / p.bytesTotal).toFixed(1)}%`, p.perServer),
+});
+```
+
+A file appears under `wikidata-<date>-all.json.bz2` only when it is
+complete and verified; until then it is `….part` (and `….part.state`).
+
 ### Streams
 
 `entities()` returns an `EntityStream`:
@@ -414,9 +642,11 @@ file up to its last whole entity and sets `stats.truncated`.
 - `for await (const e of stream)` or `for await (const batch of stream.batches())`
 - `stream.toArray()`, `stream.map(fn)`, `stream.filter(fn)`, `stream.toReadable()`
 - `stream.stats`: a promise of the counters (`entities`, `matched`,
-  `parsed`, `bytesIn`, `bytesOut`, `types`, `stopped`, `truncated`, …,
-  and `missingIds` and `classIndex` when they apply), resolved when the
-  stream ends
+  `parsed`, `unchanged`, `bytesIn`, `bytesOut`, `types`, `stopped`,
+  `truncated`, …, and `missingIds`, `merged`/`deleted`/`newer`,
+  `redirects`, `classIndex`, `placeIndex` and `referencedLabels` when they
+  apply), resolved when the stream ends
+- `stream.checkpoint`: the last checkpoint reached (with `checkpointEvery`)
 - `stream.close()`: stop early (breaking out of a loop does this too)
 - options `limit`, `onProgress`, `signal` (an `AbortSignal`), `batchSize`
   (default 1024) and `readAhead` (default 2), `threads` (default: all
@@ -432,19 +662,27 @@ be iterated once.
 The reader holds at most a few blocks per thread (bzip2 blocks are
 900 kB, ~6 MB of tables per decoding thread) and `readAhead` batches of
 entities; peak memory is ~200–300 MB on 10 cores whatever the dump's
-size. Filters cost about 2 bytes per id for `ids`, and a class index
-about 12 bytes per subclass-of edge.
+size. Filters cost about 2 bytes per id for `ids` (and 16 more with
+`revisions`), a class index about 12 bytes per subclass-of edge, a place
+index about 8 bytes per item with a country, and a redirect index 8 bytes
+per redirect. Reading from mirrors holds at most four ranges (8 MiB each)
+per connection.
 
 ## API reference
 
 | Export | Description |
 |---|---|
 | `openDump(pathOrUrl, OpenOptions?)` → `Promise<DumpReader>` | Open a dump (looks at its first bytes). |
-| `DumpReader` | `.input`, `.compression`, `.size`, `.entities(opts)`, `.extract(opts)`, `.fileInfo(opts)`, `.classIndex(opts)` |
+| `DumpReader` | `.input`, `.compression`, `.size`, `.entities(opts)`, `.extract(opts)`, `.fileInfo(opts)`, `.classIndex(opts)`, `.placeIndex(opts)` |
 | `streamEntities(pathOrUrl, EntityOptions & OpenOptions)` | Entities, opening the dump when iteration starts. |
 | `extract(pathOrUrl, ExtractOptions & OpenOptions)` → `Promise<ExtractStats>` | A subset. |
 | `fileInfo(pathOrUrl, CommonOptions & OpenOptions)` → `Promise<FileInfo>` | What a dump holds. |
 | `ClassIndex` | `.build(pathOrUrl, ClassIndexOptions & OpenOptions)`, `.load(path)`, `.save(path)`, `.size`, `.edges`, `.source`, `.parents(id)`, `.subclassesOf(ids)`, `.isSubclassOf(id, ancestor)` |
+| `PlaceIndex` | `.build(pathOrUrl, PlaceIndexOptions & OpenOptions)`, `.load(path)`, `.save(path)`, `.size`, `.sets`, `.heapBytes`, `.source`, `.countryOf(id)`, `.countriesOf(items)` |
+| `RedirectIndex` | `.build(RedirectIndexOptions)`, `.load(path)`, `.save(path)`, `.size`, `.source`, `.resolve(id)`, `.entries()` |
+| `readRedirects(RedirectIndexOptions)` | The SQL dumps' item redirects, `{ from, to }`. |
+| `liveChanges(LiveOptions)` → `EntityStream<LiveChange, LiveStats>` | Live changes, resumable. |
+| `downloadDump(DownloadOptions)` → `Promise<DownloadResult>` | A verified, resumable local copy of a dump. |
 | `EntityStream<T>` | See [Streams](#streams). |
 | `EXTERNAL_IDS`, `externalIdUrl(key, value)` | The external identifier table and URLs. |
 | `version()` | The version of the loaded native library. |
@@ -459,11 +697,14 @@ them. The main types are:
 - **Entities**: `Entity`, `Statement`, `Snaks`, `Sitelink`, `Form`,
   `Sense`, `Rank`, `EntityType`, and `Value` = the union of `TimeValue`,
   `QuantityValue`, `CoordinateValue` and the other value shapes.
-- **Filters**: `Filter`, `ItemNumbers`.
+- **Filters**: `Filter`, `ItemNumbers`, `Revisions`.
 - **Options**: `OpenOptions`, `CommonOptions`, `EntityOptions` (with
-  `ByClaim`), `ExtractOptions`, `ClassIndexOptions`.
-- **Results**: `ScanStats` (with `TypeCounts`), `ExtractStats`, `FileInfo`.
-- **Progress**: `Progress`.
+  `ByClaim`), `ExtractOptions`, `ClassIndexOptions`, `PlaceIndexOptions`,
+  `RedirectIndexOptions`, `LiveOptions`, `DownloadOptions`.
+- **Results**: `ScanStats` (with `TypeCounts` and `LabelStats`),
+  `ExtractStats`, `FileInfo`, `Checkpoint`, `LiveChange`, `LiveStats`,
+  `DownloadResult`.
+- **Progress**: `Progress`, `DownloadProgress`.
 
 ## Errors
 
@@ -566,6 +807,7 @@ Runnable TypeScript in [`examples/`](https://github.com/the-haus/wikidata-rs/tre
 | [`music-festivals.ts`](https://github.com/the-haus/wikidata-rs/blob/main/crates/bindings/wikidata-node/examples/music-festivals.ts) | Music festivals (and every subclass) in a country, as CSV, with a saved class index. |
 | [`weekly-subset.ts`](https://github.com/the-haus/wikidata-rs/blob/main/crates/bindings/wikidata-node/examples/weekly-subset.ts) | A `.jsonl.zst` subset from the latest dump, with progress. |
 | [`weekly-refresh.ts`](https://github.com/the-haus/wikidata-rs/blob/main/crates/bindings/wikidata-node/examples/weekly-refresh.ts) | One pass for artists, festivals and known ids: named branches, item-number ids, labels by country, missing ids, and the class index built on the first run. |
+| [`refresh-known.ts`](https://github.com/the-haus/wikidata-rs/blob/main/crates/bindings/wikidata-node/examples/refresh-known.ts) | Refresh the items you have: known revisions, merges and deletions, checkpoints; on the weekly dump or a daily incremental one. |
 | [`places.ts`](https://github.com/the-haus/wikidata-rs/blob/main/crates/bindings/wikidata-node/examples/places.ts) | Places with coordinates in a country, as GeoJSON lines. |
 | [`external-ids.ts`](https://github.com/the-haus/wikidata-rs/blob/main/crates/bindings/wikidata-node/examples/external-ids.ts) | Items mapped to MusicBrainz, Discogs and Spotify, with URLs (typed with `ExternalIdKey`). |
 | [`file-info.ts`](https://github.com/the-haus/wikidata-rs/blob/main/crates/bindings/wikidata-node/examples/file-info.ts) | What a dump holds. |

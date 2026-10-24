@@ -113,6 +113,7 @@ pub fn extract(
     let mut sink = |e: Event<Vec<u8>>| -> Flow {
         match e {
             Event::Progress(p) => progress(p),
+            Event::Checkpoint(_) => Flow::Continue,
             Event::Records(lines) => {
                 for l in lines {
                     let r = match format {

@@ -61,7 +61,7 @@ pub fn file_info(
     let work: Arc<Work<()>> = Arc::new(|_, _, _| Ok(Some(())));
     let mut sink = |e: crate::Event<()>| match e {
         crate::Event::Progress(p) => progress(p),
-        crate::Event::Records(_) => Flow::Continue,
+        crate::Event::Records(_) | crate::Event::Checkpoint(_) => Flow::Continue,
     };
     let r = scan(dump, opts, true, work, true, &mut sink)?;
     let m = r.max_ids;

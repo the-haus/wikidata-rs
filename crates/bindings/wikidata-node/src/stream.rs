@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use napi::threadsafe_function::{ErrorStrategy, ThreadSafeCallContext, ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi::{Env, JsFunction, JsObject, JsUnknown, Result, TypedArrayType};
 use napi_derive::napi;
-use wikidata_export::{Event, Flow, Progress, Record};
+use wikidata_export::{Checkpoint, Event, Flow, Progress, Record};
 
 use crate::batch::{typed, EntityBatch};
 use crate::credits::Credits;
@@ -16,7 +16,12 @@ use crate::credits::Credits;
 /// What the producer sends to JS.
 pub(crate) enum StreamEvent {
     Batch(Box<EntityBatch>),
+    /// A batch of JSON values (live changes): `{kind: "json", json}`.
+    Json(String),
     Progress(Progress),
+    /// Progress of another shape (downloads), passed on as it is.
+    Status(serde_json::Value),
+    Checkpoint(Box<Checkpoint>),
     End(serde_json::Value),
     Error(String),
 }
@@ -28,6 +33,29 @@ impl StreamEvent {
             StreamEvent::Batch(b) => {
                 o.set("type", "batch")?;
                 o.set("batch", b.into_js(env)?)?;
+            }
+            StreamEvent::Json(json) => {
+                let mut b = env.create_object()?;
+                b.set("kind", "json")?;
+                b.set("json", env.create_string_from_std(json)?)?;
+                o.set("type", "batch")?;
+                o.set("batch", b)?;
+            }
+            StreamEvent::Status(v) => {
+                o.set("type", "status")?;
+                o.set("status", env.to_js_value(&as_doubles(v))?)?;
+            }
+            StreamEvent::Checkpoint(cp) => {
+                o.set("type", "checkpoint")?;
+                let p = &cp.position;
+                o.set("input", cp.input.as_str())?;
+                o.set("offset", (p.bit / 8) as f64)?;
+                o.set("block", p.blocks as f64)?;
+                o.set("chunk", p.chunks as f64)?;
+                o.set("bytesOut", p.offset as f64)?;
+                o.set("entities", cp.entities as f64)?;
+                o.set("matched", cp.matched as f64)?;
+                o.set("data", typed(env, &cp.to_bytes(), TypedArrayType::Uint8)?)?;
             }
             StreamEvent::Progress(p) => {
                 o.set("type", "progress")?;
@@ -180,6 +208,15 @@ impl Sender {
             return Flow::Stop;
         }
         match e {
+            Event::Checkpoint(cp) => {
+                // After the records before it, in their own batch.
+                if self.flush() == Flow::Stop {
+                    return Flow::Stop;
+                }
+                self.cb
+                    .call(StreamEvent::Checkpoint(cp), ThreadsafeFunctionCallMode::Blocking);
+                Flow::Continue
+            }
             Event::Records(rs) => {
                 for r in rs {
                     self.batch.push(r);
@@ -324,4 +361,84 @@ pub(crate) fn panic_message(p: &(dyn std::any::Any + Send)) -> String {
         .map(|s| s.to_string())
         .or_else(|| p.downcast_ref::<String>().cloned())
         .unwrap_or_else(|| "a worker thread panicked".into())
+}
+
+/// Run `job` on its own thread, sending the JSON batches it makes under
+/// flow control (as entity batches are). The job asks `stop` whether JS
+/// closed the stream.
+pub(crate) fn spawn_json<F>(cb: Callback, read_ahead: u32, job: F) -> NativeStream
+where
+    F: FnOnce(
+            &mut dyn FnMut(String) -> Flow,
+            &(dyn Fn() -> bool + Sync),
+        ) -> std::result::Result<serde_json::Value, String>
+        + Send
+        + 'static,
+{
+    let credits = Arc::new(Credits::default());
+    credits.grant(read_ahead.max(1));
+    let h = handle(credits.clone(), &cb);
+    thread::Builder::new()
+        .name("wikidata-json".into())
+        .spawn(move || {
+            let send_cb = cb.clone();
+            let send_credits = credits.clone();
+            let mut send = move |json: String| {
+                if !send_credits.acquire() {
+                    return Flow::Stop;
+                }
+                send_cb.call(StreamEvent::Json(json), ThreadsafeFunctionCallMode::Blocking);
+                Flow::Continue
+            };
+            let stop_credits = credits.clone();
+            let stop = move || stop_credits.is_closed();
+            let event = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&mut send, &stop)))
+                .unwrap_or_else(|p| Err(format!("internal error: {}", panic_message(&p))))
+                .map_or_else(StreamEvent::Error, StreamEvent::End);
+            cb.call(event, ThreadsafeFunctionCallMode::Blocking);
+        })
+        .expect("spawn json thread");
+    h
+}
+
+/// Run `job` (a download) on its own thread, passing its status on at most
+/// every 200 ms (and the last one before the end); the status callback says
+/// `Stop` once JS closes the stream.
+pub(crate) fn spawn_status<F>(cb: Callback, job: F) -> NativeStream
+where
+    F: FnOnce(&mut dyn FnMut(serde_json::Value) -> Flow) -> std::result::Result<serde_json::Value, String>
+        + Send
+        + 'static,
+{
+    let credits = Arc::new(Credits::default());
+    let h = handle(credits.clone(), &cb);
+    thread::Builder::new()
+        .name("wikidata-task".into())
+        .spawn(move || {
+            let mut last: Option<Instant> = None;
+            let mut held = None;
+            let mut on_status = |v: serde_json::Value| {
+                if credits.is_closed() {
+                    return Flow::Stop;
+                }
+                let now = Instant::now();
+                if last.is_none_or(|t| now - t >= Duration::from_millis(200)) {
+                    last = Some(now);
+                    held = None;
+                    cb.call(StreamEvent::Status(v), ThreadsafeFunctionCallMode::NonBlocking);
+                } else {
+                    held = Some(v);
+                }
+                Flow::Continue
+            };
+            let event = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&mut on_status)))
+                .unwrap_or_else(|p| Err(format!("internal error: {}", panic_message(&p))))
+                .map_or_else(StreamEvent::Error, StreamEvent::End);
+            if let (Some(v), false) = (held, credits.is_closed()) {
+                cb.call(StreamEvent::Status(v), ThreadsafeFunctionCallMode::Blocking);
+            }
+            cb.call(event, ThreadsafeFunctionCallMode::Blocking);
+        })
+        .expect("spawn task thread");
+    h
 }

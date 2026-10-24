@@ -42,6 +42,31 @@ measured the 10-thread rows 20–30% slower: decode 0.68 s, filter 0.62 s),
 so these are lower bounds. The full dump could not be measured: it was
 still downloading.
 
+## 0.3.0 against 0.2.1
+
+0.3.0 adds checkpoints, the place and redirect indexes, revisions, labels
+of referenced items, XML input and mirrors; none of it may slow the paths
+that do not use it. Both versions built from source on the same machine,
+runs interleaved (A, B, B, A, …), best of 5–9, one thread so the system's
+background load (Spotlight was indexing) matters least:
+
+| Task (one thread) | 0.2.1 | 0.3.0 |
+|---|---:|---:|
+| Decompress and count entities (bzip2 head) | 3.74 s | 3.71 s |
+| Entities with P17 = Q55 (bzip2 head) | 3.85 s | 3.83 s |
+| Parse 520 MB of plain JSON, nl/en/mul | 1.20 s | 1.20 s |
+| Parse 400,000 small entities | 1.36 s | 1.37 s |
+| Node.js, P17 = Q55, summary fields (bzip2 head) | 3.88 s | 3.90 s |
+| Node.js, 400,000 small entities, summary / full entity | 1.21 / 1.68 s | 1.20 / 1.68 s |
+
+On all cores, P17 = Q55 on the bzip2 head: 0.63 s for both.
+
+The first 0.3.0 build decoded bzip2 4% slower on one thread although the
+decoder's code was unchanged (every function the same size): the added
+code moved its hot loops to other addresses. With loops aligned to 64
+bytes (`.cargo/config.toml`) both versions run the same, so the decoder's
+speed no longer depends on the rest of the binary.
+
 ## Results
 
 ### Decompress and count entities (52 MB of bzip2, 10,989 entities)

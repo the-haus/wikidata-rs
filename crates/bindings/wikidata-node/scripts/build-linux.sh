@@ -16,7 +16,8 @@ if [ -f /etc/alpine-release ]; then
   # libunwind/libgcc_s) dynamically. Rust's static-CRT default on musl makes
   # the loader fail with "_Unwind_Resume: initial-exec TLS resolves to
   # dynamic definition".
-  export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=-crt-static"
+  # RUSTFLAGS replaces .cargo/config.toml's flags: keep its loop alignment.
+  export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=-crt-static -C llvm-args=-align-loops=64"
   # mimalloc's default initial-exec TLS fails the same way under dlopen()
   # ("(null): initial-exec TLS resolves to dynamic definition"); musl has no
   # static-TLS surplus for libraries loaded after startup.

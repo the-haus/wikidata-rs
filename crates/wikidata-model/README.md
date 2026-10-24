@@ -28,10 +28,12 @@ println!("{}", e.to_json());
   `iso` dates and calendars, quantities with units and bounds,
   coordinates, maths, musical notation, geo-shapes, tabular data,
   `somevalue`/`novalue`.
-- Ranks (deprecated dropped by default, `best_rank`), qualifiers,
-  references, sitelinks with URLs, lexemes, properties.
+- Ranks (deprecated dropped by default, `best_rank`), qualifiers (all, or
+  only `qualifier_properties`), references, sitelinks with URLs, lexemes,
+  properties.
 - Derived fields from truthy statements: `instance_of`, `subclass_of`,
   `country`, `coordinates`, `inception`, `dissolved`, `image`, `website`,
   `external_ids` (the `EXTERNAL_IDS` table).
-- `peek`: an entity's type and id from its line's first bytes.
+- `peek`: an entity's type and id from its line's first bytes;
+  `lastrevid` from its tail.
 - A stable JSON shape (`Entity::write_json`).

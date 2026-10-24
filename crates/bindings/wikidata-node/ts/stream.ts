@@ -9,7 +9,7 @@
 import { Readable } from "node:stream";
 
 import type { NativeEvent, NativeStream } from "./native.js";
-import { WikidataError, type NativeProgress, type Progress, type ScanStats } from "./types.js";
+import { WikidataError, type Checkpoint, type NativeProgress, type Progress, type ScanStats } from "./types.js";
 
 type Starter = (callback: (event: NativeEvent) => void) => NativeStream | Promise<NativeStream>;
 
@@ -31,6 +31,38 @@ const finalizer = new FinalizationRegistry<NativeStream>((n) => {
 interface Waiter<T> {
   resolve: (batch: T[] | null) => void;
   reject: (error: Error) => void;
+}
+
+/** @internal More callbacks of a stream. */
+export interface StreamHooks {
+  /** Checkpoints, once the records before them were consumed. */
+  onCheckpoint?: ((checkpoint: Checkpoint) => void) | undefined;
+  /** Progress of other shapes (downloads), as it comes. */
+  onStatus?: ((status: unknown) => void) | undefined;
+  /**
+   * After a failure (an abort), keep the native task referenced until it
+   * ended, and let {@link EntityStream._ended} wait for that (a download
+   * saves its state as it stops).
+   */
+  holdUntilEnd?: boolean;
+}
+
+/** A checkpoint in the queue, between batches. */
+class QueuedCheckpoint {
+  constructor(readonly checkpoint: Checkpoint) {}
+}
+
+function toCheckpoint(e: Extract<NativeEvent, { type: "checkpoint" }>): Checkpoint {
+  return {
+    input: e.input,
+    offset: e.offset,
+    block: e.block,
+    chunk: e.chunk,
+    bytesOut: e.bytesOut,
+    entities: e.entities,
+    matched: e.matched,
+    data: Buffer.from(e.data.buffer, e.data.byteOffset, e.data.byteLength).toString("base64"),
+  };
 }
 
 /**
@@ -61,6 +93,10 @@ export class EntityStream<T, S = ScanStats, P = Progress> implements AsyncIterab
   #emptyStats: (stopped: boolean) => S;
   #resolveStats!: (s: S) => void;
   #rejectStats!: (e: Error) => void;
+  #hooks: StreamHooks;
+  #checkpoint: Checkpoint | undefined;
+  #nativeEnded = false;
+  #onNativeEnd: (() => void) | undefined;
 
   /** @internal */
   constructor(
@@ -69,7 +105,9 @@ export class EntityStream<T, S = ScanStats, P = Progress> implements AsyncIterab
     onProgress?: (p: P) => void,
     signal?: AbortSignal,
     makeEmptyStats?: (stopped: boolean) => S,
+    hooks: StreamHooks = {},
   ) {
+    this.#hooks = hooks;
     this.#emptyStats = makeEmptyStats ?? (emptyStats as unknown as (stopped: boolean) => S);
     this.#start = start;
     this.#decode = decode;
@@ -124,6 +162,22 @@ export class EntityStream<T, S = ScanStats, P = Progress> implements AsyncIterab
         this.#updateRef();
         return;
       }
+      case "checkpoint": {
+        if (this.#closed || this.#error) return;
+        const cp = new QueuedCheckpoint(toCheckpoint(event));
+        // A waiting consumer has consumed everything before it.
+        if (this.#waiter) this.#fire(cp);
+        else this.#queue.push(cp);
+        return;
+      }
+      case "status": {
+        try {
+          this.#hooks.onStatus?.(event.status);
+        } catch (e) {
+          this.#fail(e instanceof Error ? e : new WikidataError(String(e)));
+        }
+        return;
+      }
       case "progress": {
         if (!this.#onProgress) return;
         const { type: _type, ...progress } = event;
@@ -137,16 +191,49 @@ export class EntityStream<T, S = ScanStats, P = Progress> implements AsyncIterab
         return;
       }
       case "end":
+        this.#nativeDone();
         this.#ended = true;
         this.#release();
         this.#resolveStats(withMissingIds(event.stats) as unknown as S);
         this.#wake();
         return;
       case "error":
+        this.#nativeDone();
         this.#fail(new WikidataError(event.message));
+        this.#release();
         return;
     }
   };
+
+  /**
+   * The last checkpoint reached: every record before it was consumed
+   * (with `checkpointEvery`). Pass it as `resumeFrom` to continue there.
+   */
+  get checkpoint(): Checkpoint | undefined {
+    return this.#checkpoint;
+  }
+
+  #fire(cp: QueuedCheckpoint): void {
+    this.#checkpoint = cp.checkpoint;
+    try {
+      this.#hooks.onCheckpoint?.(cp.checkpoint);
+    } catch (e) {
+      this.#fail(e instanceof Error ? e : new WikidataError(String(e)));
+    }
+  }
+
+  #nativeDone(): void {
+    this.#nativeEnded = true;
+    this.#onNativeEnd?.();
+  }
+
+  /** @internal Resolves once the native task ended (with `holdUntilEnd`). */
+  _ended(): Promise<void> {
+    if (this.#nativeEnded || !this.#native) return Promise.resolve();
+    return new Promise((resolve) => {
+      this.#onNativeEnd = resolve;
+    });
+  }
 
   /** @internal Whether the stream has ended or was closed. */
   get _finished(): boolean {
@@ -164,7 +251,16 @@ export class EntityStream<T, S = ScanStats, P = Progress> implements AsyncIterab
     this.#ended = true;
     this.#queue.length = 0;
     this.#native?.close();
-    this.#release();
+    if (this.#hooks.holdUntilEnd && this.#native && !this.#nativeEnded) {
+      // Stay alive until the native task has stopped.
+      pinned.add(this);
+      if (!this.#referenced) {
+        this.#referenced = true;
+        this.#native.setRef(true);
+      }
+    } else {
+      this.#release();
+    }
     this.#rejectStats(error);
     if (this.#waiter) {
       const w = this.#waiter;
@@ -230,6 +326,11 @@ export class EntityStream<T, S = ScanStats, P = Progress> implements AsyncIterab
 
   async #next(): Promise<T[] | null> {
     await this.#ensureStarted();
+    // The consumer is done with what it took: the checkpoints after that
+    // are reached.
+    while (this.#queue[0] instanceof QueuedCheckpoint) {
+      this.#fire(this.#queue.shift() as QueuedCheckpoint);
+    }
     const queued = this.#queue.shift();
     if (queued !== undefined) {
       this.#native?.request(1);
@@ -316,10 +417,21 @@ export class EntityStream<T, S = ScanStats, P = Progress> implements AsyncIterab
 
 /**
  * `missingIds` from the numbers the native side sends (`missingItemNumbers`
- * and the few other ids), made into strings only when read.
+ * and the few other ids), made into strings only when read; and
+ * `referencedLabels` parsed when read.
  */
 function withMissingIds(stats: unknown): unknown {
-  const s = stats as { missingItemNumbers?: Uint32Array; missingOtherIds?: string[] };
+  const s = stats as { missingItemNumbers?: Uint32Array; missingOtherIds?: string[]; referencedLabelsJson?: string };
+  const labels = s.referencedLabelsJson;
+  if (typeof labels === "string") {
+    delete s.referencedLabelsJson;
+    let parsed: unknown;
+    Object.defineProperty(s, "referencedLabels", {
+      enumerable: true,
+      configurable: true,
+      get: () => (parsed ??= JSON.parse(labels)),
+    });
+  }
   const numbers = s.missingItemNumbers;
   if (!(numbers instanceof Uint32Array)) return stats;
   const others = s.missingOtherIds ?? [];
@@ -359,5 +471,6 @@ export function emptyStats(stopped: boolean): ScanStats {
     stopped,
     truncated: false,
     elapsedMs: 0,
+    unchanged: 0,
   };
 }

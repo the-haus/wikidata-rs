@@ -85,6 +85,17 @@ sequential there, pipelined with the parallel work on the lines (~1 and
 ~2.7 GB/s of JSON, enough to keep the parsers busy). Plain JSON is read in
 4 MB chunks.
 
+**Mirrors.** With several URLs (or more than one connection), a
+`multi::MultiReader` replaces the single HTTP stream: the file is cut into
+8 MiB ranges, worker threads (`connections` per server) take the next
+range within a window of the one being read (at most four ranges per
+connection buffered), fetch it with a checked `Range` request (resuming a
+dropped one within the range), and the reader hands the bytes on in file
+order. The servers must agree on the size; a server whose connections all
+give up hands its ranges back to the others. Mirrors cap bandwidth per
+client, so the throughput is about the sum of the servers' caps (measured:
+two servers capped at 3 MB/s read 6 MB in 1.0 s; one in 2.0 s).
+
 **Lines.** `lines::Splitter` turns decompressed blocks into `Chunk`s of
 whole lines: the line that straddles two blocks is stitched into the next
 chunk's `prefix` (only that line is copied, never a block), and a block
@@ -92,6 +103,26 @@ without a line end (an entity larger than a block) is carried over whole.
 It also checks the framing: a dump that starts with `[` must end with `]`
 (else it was truncated), and a JSON-lines file is read line by line.
 Chunks then go to the workers of the second pool.
+
+**Resume points.** Every decompressed block knows where it starts in the
+input (`BlockStart`: a bzip2 block's bit offset, the stream's combined CRC
+before it and the counts of blocks and streams; for plain JSON, a byte),
+and the splitter knows where the line it carries over began. So every
+chunk ends with a `ResumePoint`: the block where its first unread line
+starts and how many of that block's bytes were read. Reading from one
+seeks (or sends a `Range` request) to the block's byte, scans for the
+block magic at exactly that bit (anything else is an error: a resume point
+of another file), restores the stream CRC, and drops the bytes read. gzip
+and zstd have no such points.
+
+**XML.** When the decompressed data starts with `<mediawiki`, the blocks
+go through `xml::XmlEntities` before the splitter: it finds each
+`<page>`, keeps its newest `<revision>` (one revision is held at a time:
+memory is bounded by the largest revision, not the largest page),
+unescapes the stored entity JSON, adds `lastrevid` and `modified`, and
+hands on JSON lines, which the rest of the pipeline reads like any dump.
+Redirect revisions (`{"entity":"Q1","redirect":"Q2"}`) are collected as
+merges instead.
 
 ## Filtering (`wikidata-filter`)
 
@@ -124,6 +155,65 @@ decided `any`.
 line's id on the workers, before the filter runs, and the keys it holds
 are collected. After a complete pass (not stopped, not truncated) the
 requested ids that were never seen are reported as `missing_ids`.
+
+**Known revisions.** An `ids` filter with revisions keeps them as sorted
+`(key, revision)` arrays. A line whose id is requested has its `lastrevid`
+read from its tail (the dumps write it last but one; the whole line is
+searched otherwise); no newer than known, the line is rejected before any
+parse, but its id still counts as seen, and the scan counts it as
+`unchanged`.
+
+**Merges.** Compiled with a redirect index, an `ids` node matches the
+requested ids and the items they resolve to; the filter keeps, per target,
+the requested ids that redirect to it (`merged_from`), and the targets are
+tracked like requested ids. At the end, each missing id is merged (it has
+a redirect; the target's presence is known), newer (above the highest id
+of its type seen in the pass) or deleted.
+
+**The redirect index** joins two SQL dumps. `sql::SqlLines` reads the
+column names from `CREATE TABLE`, so columns are found by name, and hands
+out the `INSERT` statements (about a megabyte each), which are parsed on
+all cores (`sql::parse_insert`: quoted strings found with memchr, only the
+columns asked for). The `redirect` table (a few million rows) is read
+first into sorted `(page id, target)` pairs; the `page` table (~120 M
+rows) then streams by, and only item pages that are redirects and in those
+pairs are kept.
+
+**The place index** is built like the class index: the workers parse only
+the lines that mention `"P17":[`, `"P131":[` or `"P159":[` (one
+Aho–Corasick pass), and only those claims, into packed `(item, property,
+value)` edges. At the end the edges become CSR arrays, each place's
+country is resolved once (iteratively, up the P131 chain to a P17, at most
+24 steps; a place met again on the path adds nothing, and a result cut
+short by a cycle or the depth is not cached, so a place reached on a
+shorter path later still gets its country), and each item's countries (P17,
+then its P131 places', then its P159's) are interned as shared sets. Only
+the items and their set numbers are kept, with a bucket table over the
+item numbers for lookups. `inCountry` answers from the index by id before
+parsing; an item the index lacks is decided from its claims after a probe
+parse.
+
+**Checkpoints.** After a chunk whose records the sink took, every N
+chunks, the scan sends an `Event::Checkpoint`: the chunk's resume point,
+the counters, the highest ids, the requested ids seen so far, the input's
+name and size, and the filter's fingerprint (a stable FNV hash of the
+filter, and of the class or place index it uses). Resuming checks the
+input and the fingerprint, opens the reader at the resume point, and
+starts the counters and the seen ids from the checkpoint. In Node.js the
+sender flushes its batch before the checkpoint, and the stream calls
+`onCheckpoint` only when the consumer asks for the batch after it, so
+every record before a checkpoint has gone through the loop body.
+
+**Referenced labels** take two stages. During the pass, each match's kept
+claims (and qualifiers) note the items they refer to in a shared bitmap
+(allocated a million items at a time), and the workers take the labels of
+any line whose item is noted already. The pass also keeps, per chunk, its
+start (the previous chunk's resume point) and the ranges of 256 item
+numbers it holds: a few per chunk, as the dump is nearly in id order (6
+out-of-order ids in the first 10,989). After the pass, the items noted but
+not labelled are looked up in those ranges, and only the runs of chunks
+that may hold them are read again, from their resume points; gzip and zstd
+inputs are read again whole.
 
 **The class index** is built in one pass that parses only the lines
 containing `"P279":[`, and only their P279 claims: the truthy subclass-of
@@ -201,5 +291,24 @@ end of a closed stream); streams dropped unfinished are closed when
 collected. `AbortSignal`s close the stream; the native side then stops
 at its next chunk and joins its threads.
 
-Class indexes held by JS are referred to from task options by a registry
-id (napi objects cannot carry references to native classes).
+Class, place and redirect indexes held by JS are referred to from task
+options by a registry id (napi objects cannot carry references to native
+classes).
+
+**Live changes** read EventStreams on a thread of their own (an
+`sse::SseReader`, which reconnects with `Last-Event-ID`, so the server
+resumes right after the last event read: a partial event is dropped and
+read again, none is missed or repeated). The consumer side filters each
+`recentchange` event (wiki, namespace, then the ids' `IdSet`) and hands
+on what arrived together, asking every half second whether JS closed the
+stream, so a quiet stream still stops at once.
+
+**Downloads** fetch ranges from every server with the same range fetcher
+as the mirrors, but write them at their offset into one preallocated
+`.part` file (positional writes; the window keeps writes near the front, so
+a file system that zero-fills ahead of a write does little extra work).
+The ranges done are saved in `.part.state` every two seconds and at the
+end. A hashing loop follows the contiguous front, reading the new bytes
+back (from the page cache) into SHA-1, so verification overlaps the
+download; a resumed download first rehashes what it has. The file is
+renamed to its final name only after the hash matches the published one.

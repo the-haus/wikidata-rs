@@ -42,3 +42,18 @@ export const hasBzip2 = (() => {
     return false;
   }
 })();
+
+/** The repository's other fixtures. */
+export const fixture = (name: string): string => join(here, "..", "..", "..", "..", "fixtures", name);
+
+/** The sample's entity ids with their `lastrevid`. */
+export function sampleRevisions(): { ids: string[]; revisions: number[] } {
+  const ids: string[] = [];
+  const revisions: number[] = [];
+  for (const l of sampleLines()) {
+    const e = JSON.parse(l) as { id: string; lastrevid: number };
+    ids.push(e.id);
+    revisions.push(e.lastrevid);
+  }
+  return { ids, revisions };
+}

@@ -16,7 +16,7 @@ pub use entity::{
 pub use external::{external_id, external_id_url, ExternalId, EXTERNAL_IDS};
 pub use options::{Compiled, ModelOptions};
 pub use parse::{parse_entity, parse_entity_with, truthy, Backend, ParseError};
-pub use peek::{id_number, peek, Peek};
+pub use peek::{id_number, lastrevid, peek, Peek};
 
 /// The properties the derived fields are computed from (besides
 /// [`EXTERNAL_IDS`]): P31, P279, P17, P625, P571, P576, P18, P856.

@@ -69,4 +69,18 @@ function loadNative() {
 
 const native = loadNative();
 
-export const { open, loadClassIndex, takeClassIndex, version, activeThreads, externalIdTable } = native;
+export const {
+  open,
+  loadClassIndex,
+  takeClassIndex,
+  loadPlaceIndex,
+  takePlaceIndex,
+  loadRedirectIndex,
+  takeRedirectIndex,
+  buildRedirects,
+  live,
+  downloadDump,
+  version,
+  activeThreads,
+  externalIdTable,
+} = native;

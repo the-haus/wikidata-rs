@@ -26,6 +26,60 @@ use std::sync::Arc;
 
 use crate::{DumpError, ReadStats, Result};
 
+/// A decompressed block, and where it starts in the input when reading
+/// can resume there.
+#[derive(Debug, Default)]
+pub struct Block {
+    /// The bytes.
+    pub data: Vec<u8>,
+    /// Where the block starts (bzip2 and plain JSON).
+    pub start: Option<BlockStart>,
+}
+
+impl From<Vec<u8>> for Block {
+    fn from(data: Vec<u8>) -> Block {
+        Block { data, start: None }
+    }
+}
+
+/// Where a decompressed block starts in the input.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BlockStart {
+    /// Its first bit (bzip2: the block magic; plain JSON: the byte × 8).
+    pub bit: u64,
+    /// bzip2: the combined CRC of the stream's blocks before it.
+    pub crc: u32,
+    /// bzip2: the blocks before it.
+    pub blocks: u64,
+    /// bzip2: the streams that ended before it.
+    pub streams: u64,
+}
+
+/// Where a read can start again ([`crate::ReadOptions::resume`]): at the
+/// block where the first unread line starts, skipping the bytes of the
+/// block that were read.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ResumePoint {
+    /// The block's first bit in the input (plain JSON: byte × 8).
+    pub bit: u64,
+    /// bzip2: the stream's combined CRC before the block.
+    pub crc: u32,
+    /// bzip2: blocks before it.
+    pub blocks: u64,
+    /// bzip2: streams before it.
+    pub streams: u64,
+    /// Bytes of the decompressed block already read.
+    pub skip: u64,
+    /// Offset of the first unread byte in the decompressed dump.
+    pub offset: u64,
+    /// Chunks before it.
+    pub chunks: u64,
+    /// The dump is a JSON array (not JSON lines).
+    pub array: bool,
+    /// The array's closing `]` was read before the resume point.
+    pub closed: bool,
+}
+
 /// Whole lines of a dump (see the module docs).
 #[derive(Debug, Default)]
 pub struct Chunk {
@@ -42,6 +96,9 @@ pub struct Chunk {
     pub index: u64,
     /// Offset of the chunk's first byte in the decompressed dump.
     pub offset: u64,
+    /// Where reading can resume after this chunk's lines (bzip2 and plain
+    /// JSON).
+    pub resume: Option<ResumePoint>,
 }
 
 impl Chunk {
@@ -55,6 +112,7 @@ impl Chunk {
             end,
             index: 0,
             offset: 0,
+            resume: None,
         }
     }
 
@@ -144,6 +202,12 @@ enum Framing {
 pub struct Splitter<I> {
     inner: I,
     carry: Vec<u8>,
+    /// Where `carry` starts: its block, and the offset in that block.
+    carry_start: Option<(BlockStart, u64)>,
+    /// The last byte handed out in a chunk, but whitespace, was `]`.
+    closed: bool,
+    /// Bytes to drop from the first block (resuming).
+    skip: u64,
     framing: Framing,
     last_byte: Option<u8>,
     offset: u64,
@@ -153,22 +217,52 @@ pub struct Splitter<I> {
     allow_truncated: bool,
 }
 
-impl<I: Iterator<Item = Result<Vec<u8>>>> Splitter<I> {
+impl<I: Iterator<Item = Result<Block>>> Splitter<I> {
     /// Split `inner`'s blocks; counts go to `stats`. With
     /// `allow_truncated`, a truncated input ends at its last whole line
     /// (and `stats.truncated` is set) instead of failing.
     pub fn new(inner: I, stats: Arc<ReadStats>, allow_truncated: bool) -> Self {
+        Self::resume(inner, stats, allow_truncated, None)
+    }
+
+    /// [`Splitter::new`] for blocks that start at `resume` (whose first
+    /// `skip` bytes were read before).
+    pub fn resume(inner: I, stats: Arc<ReadStats>, allow_truncated: bool, resume: Option<ResumePoint>) -> Self {
+        let r = resume.unwrap_or_default();
         Self {
             inner,
             carry: Vec::new(),
-            framing: Framing::Unknown,
-            last_byte: None,
-            offset: 0,
-            index: 0,
+            carry_start: None,
+            closed: r.closed,
+            skip: r.skip,
+            framing: match resume {
+                None => Framing::Unknown,
+                Some(r) if r.array => Framing::Array,
+                Some(_) => Framing::Lines,
+            },
+            last_byte: r.closed.then_some(b']'),
+            offset: r.offset,
+            index: r.chunks,
             done: false,
             stats,
             allow_truncated,
         }
+    }
+
+    /// Where reading resumes after the chunks handed out so far.
+    fn resume_point(&self) -> Option<ResumePoint> {
+        let (b, skip) = self.carry_start?;
+        Some(ResumePoint {
+            bit: b.bit,
+            crc: b.crc,
+            blocks: b.blocks,
+            streams: b.streams,
+            skip,
+            offset: self.offset,
+            chunks: self.index,
+            array: self.framing == Framing::Array,
+            closed: self.closed,
+        })
     }
 
     fn observe(&mut self, block: &[u8]) -> Result<()> {
@@ -192,16 +286,24 @@ impl<I: Iterator<Item = Result<Vec<u8>>>> Splitter<I> {
     }
 
     fn chunk(&mut self, prefix: Vec<u8>, data: Vec<u8>, start: usize, end: usize) -> Chunk {
-        let c = Chunk {
+        let mut c = Chunk {
             offset: self.offset,
             index: self.index,
             prefix,
             data,
             start,
             end,
+            resume: None,
         };
         self.index += 1;
         self.offset += c.len() as u64;
+        let last = [&c.data[c.start..c.end], &c.prefix[..]]
+            .into_iter()
+            .find_map(|part| part.iter().rev().find(|b| !b.is_ascii_whitespace()));
+        if let Some(&b) = last {
+            self.closed = b == b']';
+        }
+        c.resume = self.resume_point();
         c
     }
 
@@ -228,13 +330,15 @@ impl<I: Iterator<Item = Result<Vec<u8>>>> Splitter<I> {
                     return None;
                 }
                 let prefix = std::mem::take(&mut self.carry);
+                // Nothing is left to resume from after the last line.
+                self.carry_start = None;
                 Some(Ok(self.chunk(prefix, Vec::new(), 0, 0)))
             }
         }
     }
 }
 
-impl<I: Iterator<Item = Result<Vec<u8>>>> Iterator for Splitter<I> {
+impl<I: Iterator<Item = Result<Block>>> Iterator for Splitter<I> {
     type Item = Result<Chunk>;
 
     fn next(&mut self) -> Option<Result<Chunk>> {
@@ -242,7 +346,7 @@ impl<I: Iterator<Item = Result<Vec<u8>>>> Iterator for Splitter<I> {
             return None;
         }
         loop {
-            let block = match self.inner.next() {
+            let Block { data: mut block, start } = match self.inner.next() {
                 None => return self.finish(),
                 Some(Err(DumpError::Truncated(m))) => return self.truncated(m),
                 Some(Err(e)) => {
@@ -251,6 +355,14 @@ impl<I: Iterator<Item = Result<Vec<u8>>>> Iterator for Splitter<I> {
                 }
                 Some(Ok(b)) => b,
             };
+            // The block's offset of `block[0]` (after a resume's skip).
+            let mut base = 0u64;
+            if self.skip > 0 {
+                let n = (self.skip as usize).min(block.len());
+                block.drain(..n);
+                base = n as u64;
+                self.skip -= n as u64;
+            }
             if block.is_empty() {
                 continue;
             }
@@ -258,6 +370,9 @@ impl<I: Iterator<Item = Result<Vec<u8>>>> Iterator for Splitter<I> {
             if let Err(e) = self.observe(&block) {
                 self.done = true;
                 return Some(Err(e));
+            }
+            if self.carry.is_empty() {
+                self.carry_start = start.map(|s| (s, base));
             }
             let Some(first) = memchr::memchr(b'\n', &block) else {
                 self.carry.extend_from_slice(&block);
@@ -267,6 +382,7 @@ impl<I: Iterator<Item = Result<Vec<u8>>>> Iterator for Splitter<I> {
             let mut prefix = std::mem::take(&mut self.carry);
             prefix.extend_from_slice(&block[..=first]);
             self.carry.extend_from_slice(&block[last + 1..]);
+            self.carry_start = start.map(|s| (s, base + last as u64 + 1));
             return Some(Ok(self.chunk(prefix, block, first + 1, last + 1)));
         }
     }
@@ -278,7 +394,7 @@ mod tests {
 
     fn split(blocks: &[&[u8]], allow: bool) -> (Result<Vec<Vec<u8>>>, Arc<ReadStats>) {
         let stats = Arc::new(ReadStats::default());
-        let it = blocks.iter().map(|b| Ok(b.to_vec()));
+        let it = blocks.iter().map(|b| Ok(b.to_vec().into()));
         let mut out = Vec::new();
         for c in Splitter::new(it, stats.clone(), allow) {
             match c {
