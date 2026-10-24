@@ -1,11 +1,12 @@
 // Places with coordinates in a country, as GeoJSON lines (P625 + P17),
 // labelled in Dutch, falling back to English.
 //
-//   node places.mjs DUMP [COUNTRY=Q55] > places.geojsonseq
+//   npx tsx places.ts DUMP [COUNTRY=Q55] > places.geojsonseq
 
 import { openDump } from "@wikidata-rs/node";
 
 const [input, country = "Q55"] = process.argv.slice(2);
+if (!input) throw new Error("usage: npx tsx places.ts DUMP [COUNTRY]");
 const dump = await openDump(input);
 for await (const e of dump.entities({
   filter: [{ claim: `P17=${country}` }, { hasProperty: "P625" }],

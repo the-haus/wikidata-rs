@@ -1,12 +1,34 @@
+<div align="center">
+
+<a href="https://github.com/the-haus/wikidata-rs">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/wikidata-rs-mark-dark.svg">
+    <img alt="wikidata-rs" src="docs/assets/wikidata-rs-mark.svg" width="96" height="96">
+  </picture>
+</a>
+
 # wikidata-rs
 
-[![CI](https://github.com/the-haus/wikidata-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/the-haus/wikidata-rs/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/the-haus/wikidata-rs?include_prereleases)](https://github.com/the-haus/wikidata-rs/releases)
-[![npm](https://img.shields.io/npm/v/@wikidata-rs/node.svg?label=npm)](https://www.npmjs.com/package/@wikidata-rs/node)
-[![Rust](https://img.shields.io/badge/rust-1.87%2B-orange.svg)](#building-from-source)
-[![License: FTWPL](https://img.shields.io/badge/license-FTWPL-lightgrey.svg)](LICENCE.txt)
-
 **Streaming Wikidata dumps, fast, in Rust.**
+
+Read the 103 GB Wikidata JSON dump from a file or straight from a URL, filter it before parsing, and get typed, normalised entities or compact subsets, on every core, in bounded memory.
+
+<p>
+  <a href="https://github.com/the-haus/wikidata-rs/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/the-haus/wikidata-rs/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/the-haus/wikidata-rs/actions/workflows/node.yml"><img alt="Node" src="https://github.com/the-haus/wikidata-rs/actions/workflows/node.yml/badge.svg"></a>
+  <a href="https://github.com/the-haus/wikidata-rs/releases"><img alt="Release" src="https://img.shields.io/github/v/release/the-haus/wikidata-rs?include_prereleases&label=release&color=24456b"></a>
+  <a href="https://www.npmjs.com/package/@wikidata-rs/node"><img alt="npm" src="https://img.shields.io/npm/v/@wikidata-rs/node?label=npm&logo=npm"></a>
+  <a href="#development"><img alt="Rust 1.87+" src="https://img.shields.io/badge/rust-1.87%2B-orange?logo=rust"></a>
+  <a href="LICENCE.txt"><img alt="License: FTWPL" src="https://img.shields.io/badge/license-FTWPL-lightgrey"></a>
+</p>
+
+<sub>CLI · Rust crates · Node.js &nbsp;·&nbsp; parallel bzip2 · gzip · zstd &nbsp;·&nbsp; files or resumable HTTP &nbsp;·&nbsp; filters before parsing &nbsp;·&nbsp; bounded memory</sub>
+
+</div>
+
+---
+
+## Overview
 
 wikidata-rs reads Wikidata's JSON dumps (`wikidata-*-all.json.bz2`, 103 GB
 compressed) from a file or straight from a URL and turns them into
@@ -26,11 +48,24 @@ well-organised data:
 - bounded memory, and a truncated input is always an error, never a silent
   end.
 
+Reach for it when you're building:
+
+- **Knowledge-graph imports**: the entities of one country, one class
+  (with its subclasses) or one set of ids, out of the full dump, in minutes
+- **Weekly refreshes**: a small `.jsonl.zst` subset kept instead of the
+  dump, refreshed from the latest dump by URL without a temporary file
+- **Entity linking**: labels and aliases in your languages, sitelinks, and
+  external identifiers (MusicBrainz, Discogs, OpenStreetMap, GeoNames, …)
+  with their URLs
+- **Pipelines in Node.js**: the same engine behind an async iterator, with
+  backpressure, on a worker pool that leaves the JS thread free
+
 Everything is available in three ways: the `wikidata` command line tool,
 a set of Rust crates, and a Node.js package
 ([`@wikidata-rs/node`](crates/bindings/wikidata-node)). It is a sibling of
-[tilemaker-rs](https://github.com/the-haus/tilemaker-rs) and follows the
-same design.
+[tilemaker-rs](https://github.com/the-haus/tilemaker-rs) and
+[pestle-rs](https://github.com/the-haus/pestle-rs), and follows the same
+design.
 
 ## Contents
 
@@ -41,10 +76,11 @@ same design.
 - [Verified](#verified)
 - [Performance](#performance)
 - [Project layout](#project-layout)
-- [Building from source](#building-from-source)
+- [Development](#development)
 - [Limitations](#limitations)
 - [Documentation](#documentation)
-- [Contributing and releases](#contributing-and-releases)
+- [CI/CD](#cicd)
+- [Contributing](#contributing)
 - [License](#license)
 
 ## Features
@@ -64,11 +100,11 @@ same design.
 
 Prebuilt binaries for Linux (x64, arm64), macOS (Apple Silicon, Intel) and
 Windows (x64) are attached to every
-[GitHub release](https://github.com/the-haus/wikidata-rs/releases), with
+[GitHub release](https://github.com/the-haus/wikidata-rs/releases) from v0.2.1 on, with
 SHA-256 checksums:
 
 ```sh
-VERSION=0.1.0
+VERSION=0.2.1
 TARGET=aarch64-apple-darwin   # or x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu,
                               #    x86_64-apple-darwin, x86_64-pc-windows-msvc (.zip)
 curl -fsSL "https://github.com/the-haus/wikidata-rs/releases/download/v$VERSION/wikidata-$VERSION-$TARGET.tar.gz" | tar xz
@@ -78,7 +114,7 @@ curl -fsSL "https://github.com/the-haus/wikidata-rs/releases/download/v$VERSION/
 To build the CLI with Cargo instead:
 
 ```sh
-cargo install --git https://github.com/the-haus/wikidata-rs --tag v0.1.0 wikidata-cli
+cargo install --git https://github.com/the-haus/wikidata-rs --tag v0.2.1 wikidata-cli
 ```
 
 ### Node.js
@@ -99,11 +135,11 @@ The crates are not on crates.io yet; depend on them from Git:
 ```toml
 [dependencies]
 # filters, entities, extracts, class index, file statistics
-wikidata-export = { git = "https://github.com/the-haus/wikidata-rs", tag = "v0.1.0" }
+wikidata-export = { git = "https://github.com/the-haus/wikidata-rs", tag = "v0.2.1" }
 # just the dump reader (parallel bzip2, HTTP, line chunks)
-wikidata-dump = { git = "https://github.com/the-haus/wikidata-rs", tag = "v0.1.0" }
+wikidata-dump = { git = "https://github.com/the-haus/wikidata-rs", tag = "v0.2.1" }
 # just the entity model and parser
-wikidata-model = { git = "https://github.com/the-haus/wikidata-rs", tag = "v0.1.0" }
+wikidata-model = { git = "https://github.com/the-haus/wikidata-rs", tag = "v0.2.1" }
 ```
 
 ## Quick start
@@ -146,6 +182,11 @@ for await (const e of dump.entities({ filter: { claim: "P17=Q55" }, languages: [
 
 await dump.extract({ output: "nl.jsonl.zst", filter: { claim: "P17=Q55" } });
 ```
+
+The [Node.js guide](crates/bindings/wikidata-node) covers every option, and
+[`examples/`](crates/bindings/wikidata-node/examples) holds runnable TypeScript
+(`npx tsx places.ts DUMP Q55`): festivals by class, weekly subsets and
+refreshes, GeoJSON places, external ids, file statistics.
 
 ### Rust
 
@@ -273,23 +314,37 @@ under `crates/bindings`:
 | [`wikidata-cli`](crates/wikidata-cli) | The `wikidata` binary. |
 | [`bindings/wikidata-node`](crates/bindings/wikidata-node) | The N-API binding, published as `@wikidata-rs/node`. |
 
-## Building from source
+## Development
 
-Requirements: Rust 1.87 or newer, a C compiler (for zstd and mimalloc,
-built from vendored sources), and Node.js 18 or newer for the Node
-binding.
+**Prerequisites**
+
+- Rust 1.87 or newer through `rustup` (stable is pinned in
+  [`rust-toolchain.toml`](rust-toolchain.toml), with `rustfmt` and `clippy`)
+- A C compiler (zstd and mimalloc are built from vendored sources)
+- Node.js 20+ with Corepack for the Node binding (the published package
+  runs on Node.js 18+)
+
+**Clone and bootstrap**
 
 ```sh
-# The CLI
+git clone https://github.com/the-haus/wikidata-rs.git
+cd wikidata-rs
 cargo build --release -p wikidata-cli          # target/release/wikidata
+cargo test --workspace --exclude wikidata-node # Rust tests
 
-# Rust tests
-cargo test --workspace --exclude wikidata-node
-
-# The Node binding
-corepack enable && yarn install
+corepack enable
+corepack yarn install --immutable
 cd crates/bindings/wikidata-node
-yarn build && yarn test
+corepack yarn build && corepack yarn test      # the Node binding
+corepack yarn smoke:install                    # pack, install into a fresh project, use from ESM, CJS and TypeScript
+```
+
+Before pushing:
+
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+node scripts/check-version.mjs
 ```
 
 The release profile uses fat LTO and one codegen unit. For a binary tuned
@@ -317,23 +372,53 @@ the dump format.
 
 | Document | Contents |
 |---|---|
+| [Node.js package](crates/bindings/wikidata-node) | The full JavaScript and TypeScript API, with recipes and examples. |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The pipeline, the bzip2 decoder, filters, parsing and flow control. |
 | [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) | What of the dump format is covered, and how values are normalised. |
-| [Node.js package](crates/bindings/wikidata-node) | The full JavaScript and TypeScript API. |
+| Crates: [`wikidata-dump`](crates/wikidata-dump), [`wikidata-model`](crates/wikidata-model), [`wikidata-filter`](crates/wikidata-filter), [`wikidata-export`](crates/wikidata-export) | Each crate's purpose and API. |
 | [Benchmarks](bench/README.md) | Method, results and how to reproduce them. |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Conventions, fixtures, the bzip2 decoder's checks. |
+| [RELEASING.md](RELEASING.md) | Cutting a release, dry runs, secrets. |
 | [Changelog](CHANGELOG.md) | Release history. |
 
-## Contributing and releases
+## CI/CD
 
-Development setup, conventions and the release process are described in
-[CONTRIBUTING.md](CONTRIBUTING.md). Releases are cut from a `vX.Y.Z` tag.
-A single workflow then publishes all of the following:
+Every push and pull request runs the quality gate on Linux, macOS and
+Windows; a `vX.Y.Z` tag publishes everything.
 
-- the npm packages;
-- the CLI binaries;
-- a GitHub release with notes and checksums.
+| Workflow | Purpose |
+|----------|---------|
+| [`ci`](.github/workflows/ci.yml) | `cargo fmt`, `clippy`, `cargo test` on Linux, macOS and Windows; version agreement, crate packaging, `actionlint` |
+| [`node`](.github/workflows/node.yml) | Build, typecheck and test `@wikidata-rs/node` on three OSes and Node 20, 22 and 24; `npm pack`, then install the tarball into a fresh project |
+| [`release`](.github/workflows/release.yml) | Tag-driven: versions agree with the tag, the full gate in release mode, CHANGELOG notes; npm, the `wikidata` CLI for five targets, and a GitHub release with checksums |
+| [`release-node`](.github/workflows/release-node.yml) | Build the eight platform binaries natively (glibc, musl, macOS, Windows; x64 and arm64), test each where it was built, pack, install on every platform with Node 18, then publish |
+
+See [RELEASING.md](RELEASING.md) for cutting a release.
+
+## Contributing
+
+Contributions are welcome; [CONTRIBUTING.md](CONTRIBUTING.md) has the
+conventions (fixtures, the bzip2 decoder's checks, Conventional Commits).
+
+- Run `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` and the tests before pushing
+- A fix comes with a regression test
+- Regenerate `fixtures/sample.json` with `node scripts/make-sample-dump.mjs` rather than editing it
 
 ## License
 
 Released under the FTWPL, like tilemaker-rs. See [LICENCE.txt](LICENCE.txt).
 Wikidata's data is CC0.
+
+---
+
+<div align="center">
+  <sub>
+    <a href="https://www.npmjs.com/package/@wikidata-rs/node">npm</a> ·
+    <a href="crates/bindings/wikidata-node">Node.js guide</a> ·
+    <a href="docs/">Docs</a> ·
+    <a href="https://github.com/the-haus/wikidata-rs/releases">Releases</a> ·
+    <a href="https://github.com/the-haus/wikidata-rs/issues">Issues</a>
+  </sub>
+  <br>
+  <sub>Built in Rust. The whole dump, on every core, in bounded memory.</sub>
+</div>

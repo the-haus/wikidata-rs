@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { beforeAll, describe, expect, it } from "vitest";
 
@@ -9,11 +10,13 @@ import { openDump } from "../ts/index.js";
 import { sample } from "./helpers.js";
 
 const root = resolve(__dirname, "..");
+// The examples are TypeScript, run as `npx tsx examples/places.ts` runs them.
+const tsx = pathToFileURL(require.resolve("tsx")).href;
 let work: string;
 
 /** Run an example with `@wikidata-rs/node` resolving to this package. */
 function run(example: string, args: string[]) {
-  const r = spawnSync(process.execPath, [join(work, "examples", example), ...args], {
+  const r = spawnSync(process.execPath, ["--import", tsx, join(work, "examples", example), ...args], {
     encoding: "utf8",
     cwd: work,
     timeout: 60_000,
@@ -32,18 +35,18 @@ beforeAll(() => {
 describe("examples", () => {
   it("music-festivals", () => {
     const index = join(work, "classes.wdc");
-    const lines = run("music-festivals.mjs", [sample, "Q55", index]).stdout.trim().split("\n");
+    const lines = run("music-festivals.ts", [sample, "Q55", index]).stdout.trim().split("\n");
     expect(lines[0]).toBe("id,label,lat,lon,inception,website,musicbrainz");
     expect(lines.slice(1)).toEqual([
       "Q1072,Pinkpop,50.9,6.03,1970,https://www.pinkpop.nl/,e4b4b7e5-5c2c-4f8a-a8a5-0b2b0b6a8b2e",
     ]);
     // Again, with the saved index.
-    expect(run("music-festivals.mjs", [sample, "Q31", index]).stdout).toContain("Q1073,Rock Werchter");
+    expect(run("music-festivals.ts", [sample, "Q31", index]).stdout).toContain("Q1073,Rock Werchter");
   });
 
   it("weekly-subset", async () => {
     const out = join(work, "nl.jsonl.zst");
-    const r = JSON.parse(run("weekly-subset.mjs", [sample, out, '{"claim":"P17=Q55"}']).stdout);
+    const r = JSON.parse(run("weekly-subset.ts", [sample, out, '{"claim":"P17=Q55"}']).stdout);
     expect(r.matched).toBe(9);
     const ids: string[] = [];
     for await (const e of (await openDump(out)).entities({ json: false })) ids.push(e.id);
@@ -51,7 +54,7 @@ describe("examples", () => {
   });
 
   it("external-ids", () => {
-    const lines = run("external-ids.mjs", [sample]).stdout.trim().split("\n").map((l) => JSON.parse(l));
+    const lines = run("external-ids.ts", [sample]).stdout.trim().split("\n").map((l) => JSON.parse(l));
     expect(lines[0]).toEqual({
       id: "Q42",
       label: "Douglas Adams",
@@ -66,12 +69,12 @@ describe("examples", () => {
   });
 
   it("file-info", () => {
-    const info = JSON.parse(run("file-info.mjs", [sample]).stdout);
+    const info = JSON.parse(run("file-info.ts", [sample]).stdout);
     expect(info.entities).toBe(41);
   });
 
   it("places", () => {
-    const features = run("places.mjs", [sample]).stdout.trim().split("\n").map((l) => JSON.parse(l));
+    const features = run("places.ts", [sample]).stdout.trim().split("\n").map((l) => JSON.parse(l));
     expect(features.map((f) => f.id)).toEqual(["Q55", "Q1072"]);
     expect(features[1].geometry.coordinates).toEqual([6.03, 50.9]);
   });
@@ -85,12 +88,12 @@ describe("examples", () => {
         return [r.id, r] as const;
       }));
     // First run: no index yet, so it is built during the pass.
-    const first = run("weekly-refresh.mjs", [sample, index, known]);
+    const first = run("weekly-refresh.ts", [sample, index, known]);
     expect(JSON.parse(first.stderr)).toEqual({ matched: 9, missing: ["Q999999999"], classIndex: `built ${index}` });
     expect(records(first.stdout).get("Q1072")!.as).toEqual(["artist"]);
     expect(records(first.stdout).get("Q55")).toEqual({ id: "Q55", label: "Nederland", language: "nl", as: ["known"] });
     // Second run: subclasses of music festival through the saved index.
-    const second = run("weekly-refresh.mjs", [sample, index, known]);
+    const second = run("weekly-refresh.ts", [sample, index, known]);
     expect(JSON.parse(second.stderr).classIndex).toBe("loaded");
     expect(records(second.stdout).get("Q1072")!.as).toEqual(["artist", "festival"]);
     expect(records(second.stdout).get("Q42")!.language).toBe("en");

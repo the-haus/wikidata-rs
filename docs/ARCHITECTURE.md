@@ -156,7 +156,11 @@ properties whatever `properties` keeps (those claims are parsed without
 qualifiers then). Serialising to JSON happens on the workers too.
 
 The CLI and the Node binding use mimalloc as the global allocator: 12–20%
-faster on parse-heavy work than the system allocator on macOS.
+faster on parse-heavy work than the system allocator. The Node binding
+uses the system allocator on macOS: there mimalloc keeps each thread's heap
+in fixed TLS slots of the process, so two addons that bundle it (this one
+and @pestle-rs/node) crash when loaded together. A library loaded into
+someone else's process must not assume it is the only one.
 
 ## Writing (`wikidata-dump::write`)
 

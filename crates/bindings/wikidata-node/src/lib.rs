@@ -26,7 +26,11 @@ use options::invalid;
 pub use options::NativeOptions;
 pub use stream::NativeStream;
 
-#[cfg(feature = "mimalloc")]
+// Not on macOS: mimalloc keeps each thread's heap in fixed TLS slots of the
+// process (108 and 109), so two addons that each bundle it (this one and
+// @pestle-rs/node, or two copies of this one) take each other's heaps and
+// crash. Linux and Windows give each copy its own thread-local storage.
+#[cfg(all(feature = "mimalloc", not(target_vendor = "apple")))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 

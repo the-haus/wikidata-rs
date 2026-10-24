@@ -3,7 +3,7 @@
 // in the item's own country's language, the ids the dump no longer has,
 // and, on the first run, the class index for the next one.
 //
-//   node weekly-refresh.mjs DUMP classes.wdc [known-ids.txt]
+//   npx tsx weekly-refresh.ts DUMP classes.wdc [known-ids.txt]
 //
 // The first run (no classes.wdc yet) matches festivals by their direct
 // class and builds classes.wdc as it goes; later runs load it and match
@@ -11,11 +11,11 @@
 
 import { existsSync, readFileSync } from "node:fs";
 
-import { ClassIndex, streamEntities } from "@wikidata-rs/node";
+import { ClassIndex, streamEntities, type Filter } from "@wikidata-rs/node";
 
 const [input, indexFile, knownFile] = process.argv.slice(2);
 if (!input || !indexFile) {
-  console.error("usage: node weekly-refresh.mjs DUMP classes.wdc [known-ids.txt]");
+  console.error("usage: npx tsx weekly-refresh.ts DUMP classes.wdc [known-ids.txt]");
   process.exit(1);
 }
 const haveIndex = existsSync(indexFile);
@@ -23,7 +23,7 @@ const known = Uint32Array.from(knownFile ? (readFileSync(knownFile, "utf8").matc
   Number(q.slice(1)),
 );
 
-const branches = {
+const branches: Record<string, Filter> = {
   artist: { hasProperty: "P434" },
   festival: haveIndex ? { instanceOf: { classes: ["Q868557"], subclasses: true } } : { instanceOf: ["Q868557"] },
 };

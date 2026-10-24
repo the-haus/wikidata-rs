@@ -1,16 +1,20 @@
+<div align="center">
+
 # @wikidata-rs/node
 
-[![npm version](https://img.shields.io/npm/v/@wikidata-rs/node.svg)](https://www.npmjs.com/package/@wikidata-rs/node)
-[![Node.js](https://img.shields.io/node/v/@wikidata-rs/node.svg)](#requirements)
-[![platforms](https://img.shields.io/badge/platforms-linux%20%7C%20macOS%20%7C%20windows-blue.svg)](#supported-platforms)
-[![types](https://img.shields.io/npm/types/@wikidata-rs/node.svg)](#typescript)
-[![license](https://img.shields.io/npm/l/@wikidata-rs/node.svg)](#license)
+**Fast, streaming Wikidata dumps for Node.js.**
 
-**Fast, streaming Wikidata dumps for Node.js.** Read `wikidata-*-all.json.bz2`
-from a file or a URL on every core with bounded memory, filter before
-parsing, and get typed, normalised entities, compact subsets, a class
-hierarchy and file statistics. The engine is written in Rust and exposed
-through N-API, and prebuilt binaries are provided for eight platforms.
+Read `wikidata-*-all.json.bz2` from a file or a URL on every core with bounded memory, filter before parsing, and get typed, normalised entities, compact subsets, a class hierarchy and file statistics. The engine is written in Rust and exposed through N-API, with prebuilt binaries for eight platforms.
+
+<p>
+  <a href="https://www.npmjs.com/package/@wikidata-rs/node"><img alt="npm" src="https://img.shields.io/npm/v/@wikidata-rs/node?label=npm&logo=npm"></a>
+  <a href="#requirements"><img alt="Node.js >= 18" src="https://img.shields.io/node/v/@wikidata-rs/node?logo=nodedotjs&logoColor=white"></a>
+  <a href="#supported-platforms"><img alt="platforms: linux | macOS | windows" src="https://img.shields.io/badge/platforms-linux%20%7C%20macOS%20%7C%20windows-blue"></a>
+  <a href="#typescript"><img alt="types: included" src="https://img.shields.io/badge/types-included-3178c6?logo=typescript&logoColor=white"></a>
+  <a href="#license"><img alt="License: FTWPL" src="https://img.shields.io/badge/license-FTWPL-lightgrey"></a>
+</p>
+
+</div>
 
 ```ts
 import { openDump } from "@wikidata-rs/node";
@@ -134,7 +138,9 @@ loaded.
 The native library is self-contained and links nothing from the system
 beyond the C runtime: a native bzip2 block decoder (with libbzip2's Rust
 port for the rare randomised blocks), zlib-rs, zstd 1.5, rustls for HTTPS
-(with the Mozilla root certificates), and mimalloc as its allocator.
+(with the Mozilla root certificates), and mimalloc as its allocator (on
+Linux and Windows; macOS uses the system allocator, so the package loads
+beside other addons that bundle mimalloc).
 
 ## Performance
 
@@ -553,16 +559,23 @@ package.
 
 ## Examples
 
-Runnable scripts are in [`examples/`](https://github.com/the-haus/wikidata-rs/tree/main/crates/bindings/wikidata-node/examples):
+Runnable TypeScript in [`examples/`](https://github.com/the-haus/wikidata-rs/tree/main/crates/bindings/wikidata-node/examples), also shipped in the package (`node_modules/@wikidata-rs/node/examples`). Each runs with `npx tsx`, or with plain `node` on Node 22.18+, against a local dump or a URL:
 
 | Script | What it does |
 |---|---|
-| `music-festivals.mjs` | Music festivals (and every subclass) in a country, as CSV, with a saved class index. |
-| `weekly-subset.mjs` | A `.jsonl.zst` subset from the latest dump, with progress. |
-| `weekly-refresh.mjs` | One pass for artists, festivals and known ids: named branches, item-number ids, labels by country, missing ids, and the class index built on the first run. |
-| `places.mjs` | Places with coordinates in a country, as GeoJSON lines. |
-| `external-ids.mjs` | Items mapped to MusicBrainz, Discogs and Spotify, with URLs. |
-| `file-info.mjs` | What a dump holds. |
+| [`music-festivals.ts`](https://github.com/the-haus/wikidata-rs/blob/main/crates/bindings/wikidata-node/examples/music-festivals.ts) | Music festivals (and every subclass) in a country, as CSV, with a saved class index. |
+| [`weekly-subset.ts`](https://github.com/the-haus/wikidata-rs/blob/main/crates/bindings/wikidata-node/examples/weekly-subset.ts) | A `.jsonl.zst` subset from the latest dump, with progress. |
+| [`weekly-refresh.ts`](https://github.com/the-haus/wikidata-rs/blob/main/crates/bindings/wikidata-node/examples/weekly-refresh.ts) | One pass for artists, festivals and known ids: named branches, item-number ids, labels by country, missing ids, and the class index built on the first run. |
+| [`places.ts`](https://github.com/the-haus/wikidata-rs/blob/main/crates/bindings/wikidata-node/examples/places.ts) | Places with coordinates in a country, as GeoJSON lines. |
+| [`external-ids.ts`](https://github.com/the-haus/wikidata-rs/blob/main/crates/bindings/wikidata-node/examples/external-ids.ts) | Items mapped to MusicBrainz, Discogs and Spotify, with URLs (typed with `ExternalIdKey`). |
+| [`file-info.ts`](https://github.com/the-haus/wikidata-rs/blob/main/crates/bindings/wikidata-node/examples/file-info.ts) | What a dump holds. |
+
+```sh
+cd node_modules/@wikidata-rs/node/examples
+npx tsx file-info.ts https://dumps.wikimedia.org/wikidatawiki/entities/latest-all.json.bz2
+npx tsx places.ts wikidata-20261012-all.json.bz2 Q55 > nl-places.geojsonseq
+npx tsx weekly-subset.ts https://dumps.wikimedia.org/wikidatawiki/entities/latest-all.json.bz2 nl.jsonl.zst '{"claim":"P17=Q55"}'
+```
 
 ## Changelog
 

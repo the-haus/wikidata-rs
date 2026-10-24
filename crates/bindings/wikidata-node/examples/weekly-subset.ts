@@ -2,15 +2,15 @@
 // stream the latest dump (a path or URL) and write the entities a filter
 // selects to a .jsonl.zst that reads back like the dump.
 //
-//   node weekly-subset.mjs DUMP OUT.jsonl.zst 'FILTER_JSON'
-//   node weekly-subset.mjs https://dumps.wikimedia.org/wikidatawiki/entities/latest-all.json.bz2 \
+//   npx tsx weekly-subset.ts DUMP OUT.jsonl.zst 'FILTER_JSON'
+//   npx tsx weekly-subset.ts https://dumps.wikimedia.org/wikidatawiki/entities/latest-all.json.bz2 \
 //     nl.jsonl.zst '{"any":[{"claim":"P17=Q55"},{"hasProperty":"P434"}]}'
 
 import { extract } from "@wikidata-rs/node";
 
 const [input, output, filter] = process.argv.slice(2);
 if (!input || !output) {
-  console.error("usage: node weekly-subset.mjs DUMP OUT.jsonl.zst [FILTER_JSON]");
+  console.error("usage: npx tsx weekly-subset.ts DUMP OUT.jsonl.zst [FILTER_JSON]");
   process.exit(1);
 }
 let last = 0;

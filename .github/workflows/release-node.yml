@@ -11,6 +11,8 @@
 # 3. install: on every platform, the tarballs are installed into an empty
 #    project on the oldest supported Node and used from there.
 # 4. publish: exactly those tarballs, platform packages first.
+# Artifacts are kept for a day: they only carry files from one job to the
+# next, and the organisation's artifact storage is shared.
 name: release-node
 
 on:
@@ -93,6 +95,7 @@ jobs:
           name: binary-${{ matrix.triple }}
           path: crates/bindings/wikidata-node/wikidata-node.${{ matrix.triple }}.node
           if-no-files-found: error
+          retention-days: 1
 
   pack:
     name: pack
@@ -133,6 +136,8 @@ jobs:
               const sub = JSON.parse(fs.readFileSync(`npm/${dir}/package.json`, "utf8"));
               if (!fs.existsSync(`npm/${dir}/${sub.main}`)) throw new Error(`npm/${dir} has no ${sub.main}`);
               if (sub.version !== pkg.version) throw new Error(`${sub.name} is ${sub.version}, not ${pkg.version}`);
+              // npm provenance rejects a package whose repository is not this one.
+              if (sub.repository?.url !== pkg.repository.url) throw new Error(`${sub.name} has no repository.url`);
               deps[sub.name] = sub.version;
             }
             const expected = pkg.napi.triples.additional.length;
@@ -152,6 +157,7 @@ jobs:
           name: npm-packages
           path: packages/*.tgz
           if-no-files-found: error
+          retention-days: 1
 
   # The tarballs, installed the way a user would (the platform package by
   # hand, since in a dry run it is not on the registry yet), on the oldest

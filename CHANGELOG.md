@@ -1,6 +1,25 @@
 # Changelog
 
-## 0.2.0 — unreleased
+## 0.2.1 — unreleased
+
+### Fixed
+
+- Node.js on macOS: loaded in one process with `@pestle-rs/node` (in either
+  order), the process crashed with a segfault (exit 139). Each bundled its
+  own mimalloc, which on macOS keeps every thread's heap in the same fixed
+  TLS slots, so each took the other's heaps. The binding now uses the
+  system allocator on macOS (mimalloc stays on Linux and Windows, where
+  each copy has its own thread-local storage). `test/coexist.test.ts`
+  loads two copies of the addon in one process.
+
+### Project
+
+- The release workflow keeps its artifacts for a day (the organisation's
+  artifact storage is shared; 0.2.0's release run stopped at a full quota)
+  and checks every platform package's `repository` before publishing.
+- README, RELEASING.md and the Node.js guide reorganised.
+
+## 0.2.0 — 2026-10-20
 
 What Festimap asked for, each with a regression test.
 
