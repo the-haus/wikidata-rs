@@ -11,17 +11,17 @@ resolver = "2"
 
 [workspace.package]
 edition = "2021"
-version = "0.3.0"
+version = "0.3.1"
 license-file = "LICENCE.txt"
 repository = "https://github.com/the-haus/wikidata-rs"
 rust-version = "1.87"
 
 [workspace.dependencies]
 # Internal crates.
-wikidata-dump = { path = "crates/wikidata-dump", version = "=0.3.0" }
-wikidata-model = { path = "crates/wikidata-model", version = "=0.3.0" }
-wikidata-filter = { path = "crates/wikidata-filter", version = "=0.3.0" }
-wikidata-export = { path = "crates/wikidata-export", version = "=0.3.0" }
+wikidata-dump = { path = "crates/wikidata-dump", version = "=0.3.1" }
+wikidata-model = { path = "crates/wikidata-model", version = "=0.3.1" }
+wikidata-filter = { path = "crates/wikidata-filter", version = "=0.3.1" }
+wikidata-export = { path = "crates/wikidata-export", version = "=0.3.1" }
 
 # External crates.
 anyhow = "1"

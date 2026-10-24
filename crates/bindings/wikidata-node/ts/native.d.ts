@@ -187,12 +187,20 @@ export function downloadDump(
     mirrors?: string[];
     date?: string;
     file?: string;
+    tables?: string[];
     dir: string;
     verify?: boolean;
     open?: NativeOpenOptions;
   },
   callback: Callback,
 ): NativeStream;
+export function latestDump(options: {
+  base?: string;
+  file?: string;
+  tables?: string[];
+  dir: string;
+  open?: NativeOpenOptions;
+}): Promise<unknown>;
 export function version(): string;
 export function activeThreads(): number;
 export function externalIdTable(): string[][];

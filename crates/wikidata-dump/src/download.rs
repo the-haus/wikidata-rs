@@ -34,6 +34,9 @@ use crate::{DumpError, HttpOptions, Result};
 /// Wikimedia's entity dumps.
 pub const ENTITY_DUMPS: &str = "https://dumps.wikimedia.org/wikidatawiki/entities/";
 
+/// Wikimedia's dumps of Wikidata's database (XML and SQL tables).
+pub const WIKI_DUMPS: &str = "https://dumps.wikimedia.org/wikidatawiki/";
+
 /// Options for [`download`].
 #[derive(Clone, Debug)]
 pub struct DownloadOptions {
@@ -72,6 +75,8 @@ impl Default for DownloadOptions {
 /// Progress of a download.
 #[derive(Clone, Debug, Default)]
 pub struct DownloadProgress {
+    /// The file being downloaded.
+    pub file: String,
     /// Bytes on disk (resumed ones included).
     pub bytes_done: u64,
     /// The file's size.
@@ -156,7 +161,45 @@ pub fn published_sha1(base: &str, date: &str, file: &str, http: &HttpOptions) ->
 /// published SHA-1.
 pub fn latest_dump(base: &str, file: &str, http: &HttpOptions) -> Result<(String, String)> {
     let agent = agent(http);
-    let index = get_text(&agent, &dir_url(base))
+    // The last few: an older dump than that is not "the newest".
+    for date in dates(&agent, base)?.iter().take(6) {
+        if let Some(sum) = published_sha1(base, date, file, http)? {
+            return Ok((date.clone(), sum));
+        }
+    }
+    Err(DumpError::Http(format!(
+        "{base}: no complete dump of {file} among the newest dates"
+    )))
+}
+
+/// A file of a dump, as its status lists it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DumpFile {
+    /// The SQL table (`redirect`), or the entity dump's file
+    /// (`all.json.bz2`).
+    pub part: String,
+    /// The file name (`wikidatawiki-20261001-redirect.sql.gz`).
+    pub name: String,
+    /// Its URL on the base.
+    pub url: String,
+    /// Its size, when the status gives it.
+    pub size: Option<u64>,
+    /// Its published SHA-1.
+    pub sha1: String,
+}
+
+/// A complete dump: its date and the files asked for.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DumpStatus {
+    /// `20261001`.
+    pub date: String,
+    /// The files, in the order asked.
+    pub files: Vec<DumpFile>,
+}
+
+/// The dates of a dumps directory, newest first.
+fn dates(agent: &ureq::Agent, base: &str) -> Result<Vec<String>> {
+    let index = get_text(agent, &dir_url(base))
         .map_err(|e| DumpError::Http(e.to_string()))?
         .ok_or_else(|| DumpError::Http(format!("{base}: not found")))?;
     let mut dates: Vec<String> = index
@@ -169,15 +212,155 @@ pub fn latest_dump(base: &str, file: &str, http: &HttpOptions) -> Result<(String
         .collect();
     dates.sort_unstable();
     dates.dedup();
+    dates.reverse();
+    Ok(dates)
+}
+
+/// The SQL tables of the database dump of `date` (`["redirect",
+/// "page"]`), from its `dumpstatus.json`, when every one of them is done.
+pub fn sql_dump_status(base: &str, date: &str, tables: &[String], http: &HttpOptions) -> Result<Option<DumpStatus>> {
+    let agent = agent(http);
+    let url = format!("{}{date}/dumpstatus.json", dir_url(base));
+    let Some(text) = get_text(&agent, &url).map_err(|e| DumpError::Http(e.to_string()))? else {
+        return Ok(None);
+    };
+    let status: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| DumpError::Format(format!("{url}: {e}")))?;
+    let mut files = Vec::new();
+    for table in tables {
+        let job = &status["jobs"][format!("{table}table")];
+        if job["status"] != "done" {
+            return Ok(None);
+        }
+        let Some((name, f)) = job["files"].as_object().and_then(|fs| fs.iter().next()) else {
+            return Ok(None);
+        };
+        let host = dir_url(base);
+        // The status's URLs are absolute paths on the dumps server.
+        let url = match f["url"].as_str() {
+            Some(u) if u.starts_with('/') => {
+                let origin = host.splitn(4, '/').take(3).collect::<Vec<_>>().join("/");
+                format!("{origin}{u}")
+            }
+            _ => format!("{host}{date}/{name}"),
+        };
+        files.push(DumpFile {
+            part: table.clone(),
+            name: name.clone(),
+            url,
+            size: f["size"].as_u64(),
+            sha1: f["sha1"].as_str().unwrap_or_default().to_ascii_lowercase(),
+        });
+    }
+    Ok(Some(DumpStatus {
+        date: date.to_string(),
+        files,
+    }))
+}
+
+/// The newest database dump whose SQL `tables` are all done.
+pub fn latest_sql_dump(base: &str, tables: &[String], http: &HttpOptions) -> Result<DumpStatus> {
+    let agent = agent(http);
     // The last few: an older dump than that is not "the newest".
-    for date in dates.iter().rev().take(6) {
-        if let Some(sum) = published_sha1(base, date, file, http)? {
-            return Ok((date.clone(), sum));
+    for date in dates(&agent, base)?.iter().take(6) {
+        if let Some(s) = sql_dump_status(base, date, tables, http)? {
+            return Ok(s);
         }
     }
     Err(DumpError::Http(format!(
-        "{base}: no complete dump of {file} among the newest dates"
+        "{base}: no dump among the newest dates has done the tables {}",
+        tables.join(", ")
     )))
+}
+
+/// Options for [`download_sql`].
+#[derive(Clone, Debug)]
+pub struct SqlDownloadOptions {
+    /// The database dumps' directory (default [`WIKI_DUMPS`]).
+    pub base: String,
+    /// The same directory on mirrors.
+    pub mirrors: Vec<String>,
+    /// The dump's date; `None`: the newest whose tables are done.
+    pub date: Option<String>,
+    /// The tables (default `redirect` and `page`, what the redirect
+    /// index needs).
+    pub tables: Vec<String>,
+    /// Where to put them.
+    pub dir: PathBuf,
+    /// User agent, connections per server, range size, retries.
+    pub http: HttpOptions,
+    /// Check the SHA-1s (default true).
+    pub verify: bool,
+}
+
+impl Default for SqlDownloadOptions {
+    fn default() -> Self {
+        SqlDownloadOptions {
+            base: WIKI_DUMPS.into(),
+            mirrors: Vec::new(),
+            date: None,
+            tables: vec!["redirect".into(), "page".into()],
+            dir: PathBuf::from("."),
+            http: HttpOptions::default(),
+            verify: true,
+        }
+    }
+}
+
+/// Download SQL tables of a database dump (`wikidatawiki-<date>-redirect.sql.gz`,
+/// `…-page.sql.gz`), each as [`download`] does a dump: from the base and
+/// the mirrors at once, resumable, SHA-1 verified (from the dump's
+/// `dumpstatus.json`), renamed into place when verified.
+pub fn download_sql(
+    opts: &SqlDownloadOptions,
+    progress: &mut dyn FnMut(&DownloadProgress) -> bool,
+) -> Result<Vec<DownloadStats>> {
+    let status = match &opts.date {
+        Some(d) => sql_dump_status(&opts.base, d, &opts.tables, &opts.http)?.ok_or_else(|| {
+            DumpError::Http(format!(
+                "the database dump of {d} has not done the tables {}",
+                opts.tables.join(", ")
+            ))
+        })?,
+        None => latest_sql_dump(&opts.base, &opts.tables, &opts.http)?,
+    };
+    let mut out = Vec::new();
+    for f in &status.files {
+        let urls = std::iter::once(&opts.base)
+            .chain(&opts.mirrors)
+            .map(|b| format!("{}{}/{}", dir_url(b), status.date, f.name))
+            .collect();
+        out.push(fetch(
+            &Fetch {
+                urls,
+                name: f.name.clone(),
+                date: status.date.clone(),
+                sha1: opts.verify.then(|| f.sha1.clone()),
+                dir: &opts.dir,
+                http: &opts.http,
+                start: Instant::now(),
+            },
+            progress,
+        )?);
+    }
+    Ok(out)
+}
+
+/// The newest complete entity dump of `file` (see [`latest_dump`]), as a
+/// [`DumpStatus`].
+pub fn latest_entity_dump(base: &str, file: &str, http: &HttpOptions) -> Result<DumpStatus> {
+    let (date, sha1) = latest_dump(base, file, http)?;
+    let name = dump_file_name(&date, file);
+    Ok(DumpStatus {
+        files: vec![DumpFile {
+            part: file.to_string(),
+            url: format!("{}{date}/{name}", dir_url(base)),
+            name,
+            size: None,
+            sha1,
+        }],
+        date,
+    })
 }
 
 /// The ranges done, saved beside the partial file.
@@ -312,7 +495,45 @@ pub fn download(opts: &DownloadOptions, progress: &mut dyn FnMut(&DownloadProgre
         None => latest_dump(&opts.base, &opts.file, &opts.http)?,
     };
     let name = dump_file_name(&date, &opts.file);
-    let path = opts.dir.join(&name);
+    let urls = std::iter::once(&opts.base)
+        .chain(&opts.mirrors)
+        .map(|b| format!("{}{date}/{name}", dir_url(b)))
+        .collect();
+    fetch(
+        &Fetch {
+            urls,
+            name,
+            date,
+            sha1: opts.verify.then_some(sha1),
+            dir: &opts.dir,
+            http: &opts.http,
+            start,
+        },
+        progress,
+    )
+}
+
+/// One file to fetch and verify (see the module docs).
+struct Fetch<'a> {
+    /// Its URL on the base, then on the mirrors.
+    urls: Vec<String>,
+    name: String,
+    date: String,
+    /// The published SHA-1 (`None`: not checked).
+    sha1: Option<String>,
+    dir: &'a Path,
+    http: &'a HttpOptions,
+    start: Instant,
+}
+
+/// Fetch a file in ranges from every server, resumably, verify it, and
+/// rename it into place.
+fn fetch(job: &Fetch<'_>, progress: &mut dyn FnMut(&DownloadProgress) -> bool) -> Result<DownloadStats> {
+    let start = job.start;
+    let (name, date, urls) = (job.name.clone(), job.date.clone(), &job.urls);
+    let sha1 = job.sha1.clone().unwrap_or_default();
+    let verify = job.sha1.is_some();
+    let path = job.dir.join(&name);
     let mut stats = DownloadStats {
         path: path.clone(),
         date: date.clone(),
@@ -324,15 +545,11 @@ pub fn download(opts: &DownloadOptions, progress: &mut dyn FnMut(&DownloadProgre
         stats.elapsed_ms = start.elapsed().as_millis() as u64;
         return Ok(stats);
     }
-    std::fs::create_dir_all(&opts.dir)?;
-    let urls: Vec<String> = std::iter::once(&opts.base)
-        .chain(&opts.mirrors)
-        .map(|b| format!("{}{date}/{name}", dir_url(b)))
-        .collect();
-    let agent = agent(&opts.http);
+    std::fs::create_dir_all(job.dir)?;
+    let agent = agent(job.http);
     let mut size = None;
     let mut servers = Vec::new();
-    for url in &urls {
+    for url in urls {
         match probe(&agent, url) {
             Ok((len, validator)) => {
                 if size.is_some_and(|s| s != len) {
@@ -354,10 +571,10 @@ pub fn download(opts: &DownloadOptions, progress: &mut dyn FnMut(&DownloadProgre
     }
     let size = size.unwrap_or(0);
     stats.bytes = size;
-    let range = opts.http.range_size.max(64 << 10);
+    let range = job.http.range_size.max(64 << 10);
     let ranges = size.div_ceil(range);
-    let part = opts.dir.join(format!("{name}.part"));
-    let state_path = opts.dir.join(format!("{name}.part.state"));
+    let part = job.dir.join(format!("{name}.part"));
+    let state_path = job.dir.join(format!("{name}.part.state"));
     let done = match StateFile::load(&state_path, size, range, &sha1) {
         Some(done) if part.exists() => done,
         _ => vec![false; ranges as usize],
@@ -383,7 +600,7 @@ pub fn download(opts: &DownloadOptions, progress: &mut dyn FnMut(&DownloadProgre
     };
     state.save()?;
 
-    let connections = opts.http.connections.unwrap_or(2).max(1);
+    let connections = job.http.connections.unwrap_or(2).max(1);
     // Ranges are fetched at most this far ahead of the first one missing,
     // so the file is written (and hashed) nearly in order.
     let window = (servers.len() * connections * 4) as u64;
@@ -411,7 +628,7 @@ pub fn download(opts: &DownloadOptions, progress: &mut dyn FnMut(&DownloadProgre
                 validator.clone(),
                 left.clone(),
             );
-            let retries = opts.http.retries;
+            let retries = job.http.retries;
             threads.push(std::thread::spawn(move || {
                 fetch_ranges(
                     &shared,
@@ -463,7 +680,7 @@ pub fn download(opts: &DownloadOptions, progress: &mut dyn FnMut(&DownloadProgre
             last_save = Instant::now();
         }
         let mut read_error = None;
-        while opts.verify && hashed < frontier {
+        while verify && hashed < frontier {
             let n = buf.len().min((frontier - hashed) as usize);
             if let Err(e) = read_at(&file, &mut buf[..n], hashed) {
                 read_error = Some(e);
@@ -478,7 +695,7 @@ pub fn download(opts: &DownloadOptions, progress: &mut dyn FnMut(&DownloadProgre
         if let Some(e) = read_error {
             break Err(e.into());
         }
-        if !opts.verify {
+        if !verify {
             hashed = frontier;
         }
         if last_report.elapsed() > Duration::from_millis(200) || (finished && hashed >= size) {
@@ -486,6 +703,7 @@ pub fn download(opts: &DownloadOptions, progress: &mut dyn FnMut(&DownloadProgre
             let per_server: Vec<u64> = shared.fetched.iter().map(|f| f.load(Ordering::Relaxed)).collect();
             let fetched: u64 = per_server.iter().sum();
             let p = DownloadProgress {
+                file: name.clone(),
                 bytes_done: (stats.bytes_resumed + fetched).min(size),
                 bytes_total: size,
                 bytes_fetched: fetched,
@@ -518,7 +736,7 @@ pub fn download(opts: &DownloadOptions, progress: &mut dyn FnMut(&DownloadProgre
     result?;
     file.sync_all()?;
     drop(file);
-    if opts.verify {
+    if verify {
         let got: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
         if got != sha1 {
             // Start over next time: which range is wrong is unknown.

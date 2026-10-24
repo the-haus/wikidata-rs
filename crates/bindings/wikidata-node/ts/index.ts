@@ -39,6 +39,9 @@ import {
   type DownloadOptions,
   type DownloadProgress,
   type DownloadResult,
+  type DumpStatus,
+  type LatestDumpOptions,
+  type SqlDownloadOptions,
   type EntityOptions,
   type EntityRecord,
   type ExtractOptions,
@@ -462,6 +465,54 @@ export async function downloadDump(options: DownloadOptions): Promise<DownloadRe
     { signal: options.signal },
     { onStatus: options.onProgress as ((s: unknown) => void) | undefined, holdUntilEnd: true },
   );
+}
+
+/**
+ * Download SQL tables of a database dump
+ * (`wikidatawiki-<date>-redirect.sql.gz` and `…-page.sql.gz` by
+ * default, what {@link RedirectIndex.build} reads), each as
+ * {@link downloadDump} does a dump: the newest date whose tables are all
+ * done (from its `dumpstatus.json`) or `date`, from the base and every
+ * mirror at once, resumable, SHA-1 verified, renamed into place when
+ * verified.
+ */
+export async function downloadSqlDumps(options: SqlDownloadOptions): Promise<{ date: string; files: DownloadResult[] }> {
+  return task<{ date: string; files: DownloadResult[] }>(
+    (cb) => {
+      const open = openOptions(options);
+      if (options.rangeSize !== undefined) open.rangeSize = options.rangeSize;
+      const o: Parameters<typeof native.downloadDump>[0] = {
+        dir: toPath(options.dir),
+        open,
+        tables: [...(options.tables ?? ["redirect", "page"])],
+      };
+      if (options.date !== undefined && options.date !== "latest") o.date = options.date;
+      if (options.base !== undefined) o.base = options.base;
+      if (options.mirrors !== undefined) o.mirrors = [...options.mirrors];
+      if (options.verify !== undefined) o.verify = options.verify;
+      return native.downloadDump(o, cb);
+    },
+    { signal: options.signal },
+    { onStatus: options.onProgress as ((s: unknown) => void) | undefined, holdUntilEnd: true },
+  );
+}
+
+/**
+ * The newest complete dump: the entity dump (the newest date whose
+ * `sha1sums.txt` lists `file`), or, with `tables`, the database dump whose
+ * tables are all done (its `dumpstatus.json`); its date and files with
+ * their URLs and SHA-1s.
+ */
+export async function latestDump(options: LatestDumpOptions = {}): Promise<DumpStatus> {
+  const o: Parameters<typeof native.latestDump>[0] = { dir: ".", open: openOptions(options) };
+  if (options.tables !== undefined) o.tables = [...options.tables];
+  if (options.file !== undefined) o.file = options.file;
+  if (options.base !== undefined) o.base = options.base;
+  try {
+    return (await native.latestDump(o)) as DumpStatus;
+  } catch (e) {
+    throw new WikidataError(e instanceof Error ? e.message : String(e));
+  }
 }
 
 /** An open dump. Create one with {@link openDump}. */

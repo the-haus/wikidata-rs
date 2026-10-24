@@ -115,7 +115,7 @@ Windows (x64) are attached to every
 SHA-256 checksums:
 
 ```sh
-VERSION=0.3.0
+VERSION=0.3.1
 TARGET=aarch64-apple-darwin   # or x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu,
                               #    x86_64-apple-darwin, x86_64-pc-windows-msvc (.zip)
 curl -fsSL "https://github.com/the-haus/wikidata-rs/releases/download/v$VERSION/wikidata-$VERSION-$TARGET.tar.gz" | tar xz
@@ -125,7 +125,7 @@ curl -fsSL "https://github.com/the-haus/wikidata-rs/releases/download/v$VERSION/
 To build the CLI with Cargo instead:
 
 ```sh
-cargo install --git https://github.com/the-haus/wikidata-rs --tag v0.3.0 wikidata-cli
+cargo install --git https://github.com/the-haus/wikidata-rs --tag v0.3.1 wikidata-cli
 ```
 
 ### Node.js
@@ -146,11 +146,11 @@ The crates are not on crates.io yet; depend on them from Git:
 ```toml
 [dependencies]
 # filters, entities, extracts, class index, file statistics
-wikidata-export = { git = "https://github.com/the-haus/wikidata-rs", tag = "v0.3.0" }
+wikidata-export = { git = "https://github.com/the-haus/wikidata-rs", tag = "v0.3.1" }
 # just the dump reader (parallel bzip2, HTTP, line chunks)
-wikidata-dump = { git = "https://github.com/the-haus/wikidata-rs", tag = "v0.3.0" }
+wikidata-dump = { git = "https://github.com/the-haus/wikidata-rs", tag = "v0.3.1" }
 # just the entity model and parser
-wikidata-model = { git = "https://github.com/the-haus/wikidata-rs", tag = "v0.3.0" }
+wikidata-model = { git = "https://github.com/the-haus/wikidata-rs", tag = "v0.3.1" }
 ```
 
 ## Quick start
@@ -194,6 +194,8 @@ wikidata live --id Q42,Q55 --last-event-id "$(tail -1 changes.jsonl | jq -r .eve
 
 # A local copy: newest complete dump, from two servers, verified, resumable
 wikidata download --dir /data/dumps --mirror https://dumps.wikimedia.your.org/wikidatawiki/entities/
+wikidata download --dir /data/sql --tables redirect,page          # the SQL tables for `wikidata redirects`
+wikidata download --latest                                        # only the newest complete dump's date and files
 ```
 
 Run `wikidata --help`, or `wikidata <command> --help`, for every option.

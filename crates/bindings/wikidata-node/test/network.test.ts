@@ -8,7 +8,14 @@ import { join } from "node:path";
 
 import { afterAll, describe, expect, it } from "vitest";
 
-import { downloadDump, liveChanges, streamEntities, type DownloadProgress } from "../ts/index.js";
+import {
+  downloadDump,
+  downloadSqlDumps,
+  latestDump,
+  liveChanges,
+  streamEntities,
+  type DownloadProgress,
+} from "../ts/index.js";
 import { sample, tmp } from "./helpers.js";
 
 const servers: Server[] = [];
@@ -101,9 +108,64 @@ describe("downloadDump", () => {
     expect(r.path).toBe(final);
     expect(r.sha1).toBe(sha1);
     expect(r.bytesResumed).toBeGreaterThan(0);
-    expect(r.perServer.every((n) => n > 0)).toBe(true);
+    // The few ranges left after the stop may all come from one server.
+    expect(r.perServer).toHaveLength(2);
     expect(readFileSync(final).equals(body)).toBe(true);
     expect((await downloadDump(options)).alreadyDone).toBe(true);
+  });
+});
+
+describe("downloadSqlDumps and latestDump", () => {
+  it("find and fetch the SQL tables of the newest complete database dump", async () => {
+    const redirect = Buffer.from("redirect table ".repeat(20_000));
+    const page = Buffer.from("page table ".repeat(200_000));
+    const sha1 = (b: Buffer) => createHash("sha1").update(b).digest("hex");
+    const job = (table: string, date: string, body: Buffer, status: string) => {
+      const name = `wikidatawiki-${date}-${table}.sql.gz`;
+      return {
+        status,
+        files: { [name]: { size: body.length, url: `/wikidatawiki/${date}/${name}`, sha1: sha1(body) } },
+      };
+    };
+    const status = (date: string, pageStatus: string) =>
+      Buffer.from(
+        JSON.stringify({ jobs: { redirecttable: job("redirect", date, redirect, "done"), pagetable: job("page", date, page, pageStatus) } }),
+      );
+    const site = {
+      "/wikidatawiki/": Buffer.from('<a href="20261001/">20261001/</a> <a href="20261101/">20261101/</a>'),
+      "/wikidatawiki/20261001/dumpstatus.json": status("20261001", "done"),
+      "/wikidatawiki/20261101/dumpstatus.json": status("20261101", "in-progress"),
+      "/wikidatawiki/20261001/wikidatawiki-20261001-redirect.sql.gz": redirect,
+      "/wikidatawiki/20261001/wikidatawiki-20261001-page.sql.gz": page,
+      "/entities/": Buffer.from('<a href="20261019/">20261019/</a>'),
+      "/entities/20261019/wikidata-20261019-sha1sums.txt": Buffer.from(`${"a".repeat(40)}  wikidata-20261019-all.json.bz2\n`),
+    };
+    const a = await files(site);
+    const b = await files(site);
+    const latest = await latestDump({ base: `${a}/wikidatawiki/`, tables: ["redirect", "page"] });
+    expect(latest.date).toBe("20261001");
+    expect(latest.files.map((f) => [f.part, f.name, f.sha1])).toEqual([
+      ["redirect", "wikidatawiki-20261001-redirect.sql.gz", sha1(redirect)],
+      ["page", "wikidatawiki-20261001-page.sql.gz", sha1(page)],
+    ]);
+    const entity = await latestDump({ base: `${a}/entities/` });
+    expect(entity.date).toBe("20261019");
+    expect(entity.files[0]!.name).toBe("wikidata-20261019-all.json.bz2");
+
+    const dir = tmp();
+    const seen = new Set<string>();
+    const got = await downloadSqlDumps({
+      dir,
+      base: `${a}/wikidatawiki/`,
+      mirrors: [`${b}/wikidatawiki/`],
+      rangeSize: 256 << 10,
+      onProgress: (p) => seen.add(p.file),
+    });
+    expect(got.date).toBe("20261001");
+    expect(got.files.map((f) => f.sha1)).toEqual([sha1(redirect), sha1(page)]);
+    expect(readFileSync(got.files[1]!.path).equals(page)).toBe(true);
+    expect(seen.has("wikidatawiki-20261001-page.sql.gz")).toBe(true);
+    await expect(downloadSqlDumps({ dir, base: `${a}/wikidatawiki/`, date: "20261101" })).rejects.toThrow(/not done/);
   });
 });
 

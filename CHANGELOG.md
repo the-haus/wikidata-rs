@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.3.1 — unreleased
+
+Fixes from Festimap adopting 0.3.0 (its W-17 to W-19), each with a
+regression test.
+
+### Fixed
+
+- Merges and known revisions together: an item that another requested id
+  was merged into was skipped when its own revision was known and
+  unchanged, so the merge was reported (`merged`, `inDump: true`) but its
+  entity never came through and `mergedFrom` was lost. Such an item now
+  always comes through (and is not counted as `unchanged`).
+- `languages` / `sitelinks` rules with a `placeIndex`: an item newer than
+  the index (a venue created since it was built) is now placed by its own
+  P131 and P159 through the index, as `inCountry` already did, instead of
+  getting only the `always` languages. P131 and P159 are read for this
+  whatever `properties` keeps.
+- Checkpoints of plain JSON inputs: `offset` is now the first unread
+  line's byte; it was the start of the 4 MB read it falls in. Resuming was
+  already exact.
+
+### Added
+
+- `downloadSqlDumps()` and `wikidata download --tables redirect,page`: the
+  SQL tables of a database dump (`wikidatawiki-<date>-redirect.sql.gz`,
+  `…-page.sql.gz`, what the redirect index reads), the newest date whose
+  tables are all done (from `dumpstatus.json`) or a given one, fetched like
+  `downloadDump`: from mirrors at once, resumable, SHA-1 verified, renamed
+  into place when verified.
+- `latestDump()` and `wikidata download --latest`: the newest complete
+  dump, the entity dump or (with `tables`) the database dump, with its
+  date and files (URLs, sizes, SHA-1s), to name a folder before
+  downloading.
+- `DownloadProgress.file`.
+- Rust: `wikidata_dump::download::{download_sql, SqlDownloadOptions,
+  sql_dump_status, latest_sql_dump, latest_entity_dump, DumpStatus,
+  DumpFile, WIKI_DUMPS}`, `ResumePoint::{plain, input_offset}`,
+  `BlockStart::plain`.
+
 ## 0.3.0 — unreleased
 
 What Festimap needs to use the dumps to their full potential (W-8 to W-16

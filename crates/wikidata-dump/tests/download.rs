@@ -149,3 +149,89 @@ fn a_corrupted_range_fails_verification() {
         .to_string()
         .contains("not complete"));
 }
+
+/// The database dumps' directory: the SQL tables of the newest date are
+/// not all done yet.
+fn wiki_site(redirect: &Arc<Vec<u8>>, page: &Arc<Vec<u8>>) -> HashMap<String, Arc<Vec<u8>>> {
+    let mut f = HashMap::new();
+    f.insert(
+        "/wikidatawiki/".to_string(),
+        Arc::new(br#"<a href="20261001/">20261001/</a> <a href="20261101/">20261101/</a>"#.to_vec()),
+    );
+    let job = |table: &str, date: &str, body: &[u8], status: &str| {
+        let name = format!("wikidatawiki-{date}-{table}.sql.gz");
+        format!(
+            r#""{table}table":{{"status":"{status}","files":{{"{name}":{{"size":{},"url":"/wikidatawiki/{date}/{name}","sha1":"{}"}}}}}}"#,
+            body.len(),
+            hex(body)
+        )
+    };
+    let status = |date: &str, page_status: &str| {
+        format!(
+            r#"{{"jobs":{{{},{},"xmlstubsdump":{{"status":"done"}}}},"version":"0.8"}}"#,
+            job("redirect", date, redirect, "done"),
+            job("page", date, page, page_status)
+        )
+    };
+    f.insert(
+        "/wikidatawiki/20261001/dumpstatus.json".into(),
+        Arc::new(status("20261001", "done").into_bytes()),
+    );
+    f.insert(
+        "/wikidatawiki/20261101/dumpstatus.json".into(),
+        Arc::new(status("20261101", "in-progress").into_bytes()),
+    );
+    f.insert(
+        "/wikidatawiki/20261001/wikidatawiki-20261001-redirect.sql.gz".into(),
+        redirect.clone(),
+    );
+    f.insert(
+        "/wikidatawiki/20261001/wikidatawiki-20261001-page.sql.gz".into(),
+        page.clone(),
+    );
+    f
+}
+
+#[test]
+fn the_sql_tables_of_the_newest_complete_database_dump() {
+    use wikidata_dump::download::{download_sql, latest_sql_dump, SqlDownloadOptions};
+    let redirect = Arc::new(noise(300_000));
+    let page = Arc::new(noise(MB * 2 + 3));
+    let a = serve_files(wiki_site(&redirect, &page), Server::default());
+    let b = serve_files(wiki_site(&redirect, &page), Server::default());
+    let o = SqlDownloadOptions {
+        base: format!("{}/wikidatawiki/", a.url),
+        mirrors: vec![format!("{}/wikidatawiki/", b.url)],
+        dir: tmp("sql"),
+        http: HttpOptions {
+            range_size: 256 << 10,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let status = latest_sql_dump(&o.base, &o.tables, &o.http).unwrap();
+    assert_eq!(status.date, "20261001", "20261101 has not done the page table");
+    assert_eq!(
+        status.files.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(),
+        [
+            "wikidatawiki-20261001-redirect.sql.gz",
+            "wikidatawiki-20261001-page.sql.gz"
+        ]
+    );
+    assert_eq!(status.files[1].sha1, hex(&page));
+    assert_eq!(
+        status.files[1].url,
+        format!("{}/wikidatawiki/20261001/wikidatawiki-20261001-page.sql.gz", a.url)
+    );
+    let got = download_sql(&o, &mut |_| true).unwrap();
+    assert_eq!(std::fs::read(&got[0].path).unwrap(), *redirect);
+    assert_eq!(std::fs::read(&got[1].path).unwrap(), *page);
+    assert!(got.iter().all(|s| s.sha1.is_some() && s.date == "20261001"));
+    // A date whose tables are not done.
+    let mut o = o;
+    o.date = Some("20261101".into());
+    assert!(download_sql(&o, &mut |_| true)
+        .unwrap_err()
+        .to_string()
+        .contains("has not done"));
+}

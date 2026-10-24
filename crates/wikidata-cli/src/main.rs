@@ -294,9 +294,17 @@ struct DownloadArgs {
     /// Which file of the dump.
     #[arg(long, default_value = "all.json.bz2")]
     file: String,
-    /// The dumps' directory.
-    #[arg(long, default_value = wikidata_dump::download::ENTITY_DUMPS)]
-    base: String,
+    /// SQL tables of the database dump instead (comma-separated):
+    /// redirect,page for `wikidata redirects`.
+    #[arg(long, value_delimiter = ',')]
+    tables: Vec<String>,
+    /// Only print the newest complete dump (its date and files) as JSON.
+    #[arg(long)]
+    latest: bool,
+    /// The dumps' directory (default: the entity dumps, or with --tables
+    /// the database dumps, on dumps.wikimedia.org).
+    #[arg(long)]
+    base: Option<String>,
     /// The same directory on a mirror (repeatable), e.g.
     /// https://dumps.wikimedia.your.org/wikidatawiki/entities/
     #[arg(long = "mirror", value_name = "URL")]
@@ -1066,17 +1074,93 @@ fn redirects(a: RedirectsArgs) -> Result<()> {
 }
 
 fn download_cmd(a: DownloadArgs) -> Result<()> {
+    use wikidata_dump::download::{
+        download_sql, latest_entity_dump, latest_sql_dump, DownloadStats, DumpStatus, SqlDownloadOptions, ENTITY_DUMPS,
+        WIKI_DUMPS,
+    };
+    let sql = !a.tables.is_empty();
+    let base = a
+        .base
+        .clone()
+        .unwrap_or_else(|| (if sql { WIKI_DUMPS } else { ENTITY_DUMPS }).to_string());
+    let http = HttpOptions {
+        connections: Some(a.connections),
+        range_size: a.range_mib.max(1) << 20,
+        ..Default::default()
+    };
+    if a.latest {
+        let s: DumpStatus = if sql {
+            latest_sql_dump(&base, &a.tables, &http)?
+        } else {
+            latest_entity_dump(&base, &a.file, &http)?
+        };
+        let files: Vec<serde_json::Value> = s
+            .files
+            .iter()
+            .map(|f| serde_json::json!({"name": f.name, "url": f.url, "size": f.size, "sha1": f.sha1}))
+            .collect();
+        println!("{}", serde_json::json!({"date": s.date, "files": files}));
+        return Ok(());
+    }
+    let report = |stats: &DownloadStats| {
+        if a.quiet {
+            return;
+        }
+        if stats.already_done {
+            eprintln!("{} is already there", stats.path.display());
+        } else {
+            eprintln!(
+                "Wrote {} ({}, {} fetched, {} resumed) in {:.1} s{}",
+                stats.path.display(),
+                human_bytes(stats.bytes),
+                human_bytes(stats.bytes_fetched),
+                human_bytes(stats.bytes_resumed),
+                stats.elapsed_ms as f64 / 1000.0,
+                stats
+                    .sha1
+                    .as_ref()
+                    .map(|s| format!(", SHA-1 {s} verified"))
+                    .unwrap_or_default()
+            );
+        }
+    };
+    if sql {
+        let opts = SqlDownloadOptions {
+            base,
+            mirrors: a.mirrors.clone(),
+            date: a.date.clone(),
+            tables: a.tables.clone(),
+            dir: a.dir.clone(),
+            http,
+            verify: !a.no_verify,
+        };
+        let quiet = a.quiet;
+        for stats in download_sql(&opts, &mut |p| {
+            if !quiet && std::io::stderr().is_terminal() {
+                eprint!(
+                    "\r\x1b[K{}: {} of {}",
+                    p.file,
+                    human_bytes(p.bytes_done),
+                    human_bytes(p.bytes_total)
+                );
+            }
+            true
+        })? {
+            if !quiet && std::io::stderr().is_terminal() {
+                eprintln!();
+            }
+            report(&stats);
+            println!("{}", stats.path.display());
+        }
+        return Ok(());
+    }
     let opts = DownloadOptions {
-        base: a.base,
-        mirrors: a.mirrors,
-        date: a.date,
-        file: a.file,
-        dir: a.dir,
-        http: HttpOptions {
-            connections: Some(a.connections),
-            range_size: a.range_mib.max(1) << 20,
-            ..Default::default()
-        },
+        base,
+        mirrors: a.mirrors.clone(),
+        date: a.date.clone(),
+        file: a.file.clone(),
+        dir: a.dir.clone(),
+        http,
         verify: !a.no_verify,
     };
     let tty = std::io::stderr().is_terminal();
@@ -1110,25 +1194,7 @@ fn download_cmd(a: DownloadArgs) -> Result<()> {
     if tty && !a.quiet {
         eprintln!();
     }
-    if !a.quiet {
-        if stats.already_done {
-            eprintln!("{} is already there", stats.path.display());
-        } else {
-            eprintln!(
-                "Wrote {} ({}, {} fetched, {} resumed) in {:.1} s{}",
-                stats.path.display(),
-                human_bytes(stats.bytes),
-                human_bytes(stats.bytes_fetched),
-                human_bytes(stats.bytes_resumed),
-                stats.elapsed_ms as f64 / 1000.0,
-                stats
-                    .sha1
-                    .as_ref()
-                    .map(|s| format!(", SHA-1 {s} verified"))
-                    .unwrap_or_default()
-            );
-        }
-    }
+    report(&stats);
     println!("{}", stats.path.display());
     Ok(())
 }

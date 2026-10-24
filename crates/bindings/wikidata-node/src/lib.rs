@@ -21,7 +21,10 @@ use napi::bindgen_prelude::AsyncTask;
 use napi::bindgen_prelude::Uint32Array;
 use napi::{Env, JsFunction, Result, Task};
 use napi_derive::napi;
-use wikidata_dump::download::{download, DownloadOptions};
+use wikidata_dump::download::{
+    download, download_sql, latest_entity_dump, latest_sql_dump, DownloadOptions, DownloadStats, DumpStatus,
+    SqlDownloadOptions, ENTITY_DUMPS, WIKI_DUMPS,
+};
 use wikidata_export::{
     build_redirect_index, live_changes, Dump, EntityOptions, ExtractOptions, Flow, HttpOptions, Input, LiveOptions,
     RedirectOptions, ScanOptions, WriteOptions,
@@ -385,6 +388,8 @@ pub struct NativeDownloadOptions {
     pub date: Option<String>,
     /// The file of the dump (default `all.json.bz2`).
     pub file: Option<String>,
+    /// SQL tables of the database dump instead (`["redirect", "page"]`).
+    pub tables: Option<Vec<String>>,
     /// Where to put it.
     pub dir: String,
     /// Check the SHA-1 (default true).
@@ -393,27 +398,52 @@ pub struct NativeDownloadOptions {
     pub open: Option<NativeOpenOptions>,
 }
 
-/// Download a dump; status events carry its progress.
+fn download_json(s: &DownloadStats) -> serde_json::Value {
+    serde_json::json!({
+        "path": s.path.display().to_string(),
+        "date": s.date,
+        "bytes": s.bytes,
+        "bytesFetched": s.bytes_fetched,
+        "bytesResumed": s.bytes_resumed,
+        "perServer": s.per_server,
+        "sha1": s.sha1,
+        "alreadyDone": s.already_done,
+        "elapsedMs": s.elapsed_ms,
+    })
+}
+
+/// Download a dump (or, with `tables`, SQL tables of a database dump);
+/// status events carry its progress.
 #[napi(ts_args_type = "options: NativeDownloadOptions, callback: (event: unknown) => void")]
 pub fn download_dump(options: NativeDownloadOptions, callback: JsFunction) -> Result<NativeStream> {
     let cb = stream::callback(&callback)?;
-    let mut opts = DownloadOptions {
-        dir: options.dir.into(),
-        http: http_options(options.open.unwrap_or_default()),
-        verify: options.verify.unwrap_or(true),
-        date: options.date,
-        mirrors: options.mirrors.unwrap_or_default(),
-        ..Default::default()
+    let http = http_options(options.open.unwrap_or_default());
+    let verify = options.verify.unwrap_or(true);
+    let dir: std::path::PathBuf = options.dir.into();
+    let mirrors = options.mirrors.unwrap_or_default();
+    let tables = options.tables.filter(|t| !t.is_empty());
+    let entity = DownloadOptions {
+        base: options.base.clone().unwrap_or_else(|| ENTITY_DUMPS.into()),
+        mirrors: mirrors.clone(),
+        date: options.date.clone(),
+        file: options.file.unwrap_or_else(|| "all.json.bz2".into()),
+        dir: dir.clone(),
+        http: http.clone(),
+        verify,
     };
-    if let Some(b) = options.base {
-        opts.base = b;
-    }
-    if let Some(f) = options.file {
-        opts.file = f;
-    }
+    let sql = tables.map(|tables| SqlDownloadOptions {
+        base: options.base.unwrap_or_else(|| WIKI_DUMPS.into()),
+        mirrors,
+        date: options.date,
+        tables,
+        dir,
+        http,
+        verify,
+    });
     Ok(stream::spawn_status(cb, move |status| {
-        let stats = download(&opts, &mut |p| {
+        let mut on = |p: &wikidata_dump::download::DownloadProgress| {
             let v = serde_json::json!({
+                "file": p.file,
                 "bytesDone": p.bytes_done,
                 "bytesTotal": p.bytes_total,
                 "bytesFetched": p.bytes_fetched,
@@ -422,20 +452,65 @@ pub fn download_dump(options: NativeDownloadOptions, callback: JsFunction) -> Re
                 "elapsedMs": p.elapsed_ms,
             });
             status(v) == Flow::Continue
-        })
-        .map_err(|e| e.to_string())?;
-        Ok(serde_json::json!({
-            "path": stats.path.display().to_string(),
-            "date": stats.date,
-            "bytes": stats.bytes,
-            "bytesFetched": stats.bytes_fetched,
-            "bytesResumed": stats.bytes_resumed,
-            "perServer": stats.per_server,
-            "sha1": stats.sha1,
-            "alreadyDone": stats.already_done,
-            "elapsedMs": stats.elapsed_ms,
-        }))
+        };
+        match &sql {
+            Some(sql) => {
+                let files = download_sql(sql, &mut on).map_err(|e| e.to_string())?;
+                let date = files.first().map(|f| f.date.clone()).unwrap_or_default();
+                Ok(serde_json::json!({ "date": date, "files": files.iter().map(download_json).collect::<Vec<_>>() }))
+            }
+            None => Ok(download_json(&download(&entity, &mut on).map_err(|e| e.to_string())?)),
+        }
     }))
+}
+
+/// Looks up the newest complete dump on the libuv pool.
+pub struct LatestTask {
+    options: NativeDownloadOptions,
+}
+
+impl Task for LatestTask {
+    type Output = DumpStatus;
+    type JsValue = napi::JsUnknown;
+
+    fn compute(&mut self) -> Result<DumpStatus> {
+        let o = &self.options;
+        let http = http_options(NativeOpenOptions {
+            user_agent: o.open.as_ref().and_then(|x| x.user_agent.clone()),
+            retries: o.open.as_ref().and_then(|x| x.retries),
+            ..Default::default()
+        });
+        let r = match o.tables.as_ref().filter(|t| !t.is_empty()) {
+            Some(tables) => latest_sql_dump(o.base.as_deref().unwrap_or(WIKI_DUMPS), tables, &http),
+            None => latest_entity_dump(
+                o.base.as_deref().unwrap_or(ENTITY_DUMPS),
+                o.file.as_deref().unwrap_or("all.json.bz2"),
+                &http,
+            ),
+        };
+        r.map_err(|e| invalid(e.to_string()))
+    }
+
+    fn resolve(&mut self, env: Env, s: DumpStatus) -> Result<napi::JsUnknown> {
+        let files: Vec<serde_json::Value> = s
+            .files
+            .iter()
+            .map(|f| {
+                serde_json::json!({
+                    "part": f.part, "name": f.name, "url": f.url,
+                    "size": f.size.map(|n| n as f64), "sha1": f.sha1,
+                })
+            })
+            .collect();
+        env.to_js_value(&serde_json::json!({ "date": s.date, "files": files }))
+    }
+}
+
+/// The newest complete dump: the entity dump of `file`, or, with
+/// `tables`, the database dump whose tables are all done.
+#[napi(ts_return_type = "Promise<unknown>")]
+pub fn latest_dump(options: NativeDownloadOptions) -> AsyncTask<LatestTask> {
+    AsyncTask::new(LatestTask { options })
 }
 
 /// The library version.

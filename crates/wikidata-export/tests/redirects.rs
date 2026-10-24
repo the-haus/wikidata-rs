@@ -124,3 +124,57 @@ fn misses_are_merged_deleted_or_newer() {
     assert_eq!(json["merged"][0]["inDump"], true);
     assert_eq!(json["newer"][0], "Q999999999");
 }
+
+/// A merge whose target is itself a known, unchanged id still comes
+/// through (Festimap's W-17).
+#[test]
+fn a_merge_into_an_unchanged_known_item_comes_through() {
+    let redirects = Arc::new(index(
+        &fixture("wikidatawiki-redirect.sql"),
+        &fixture("wikidatawiki-page.sql"),
+    ));
+    let dump = Dump::open(sample_path()).unwrap();
+    let q42 = sample_lines()
+        .iter()
+        .map(|l| serde_json::from_slice::<serde_json::Value>(l).unwrap())
+        .find(|v| v["id"] == "Q42")
+        .unwrap()["lastrevid"]
+        .as_u64()
+        .unwrap();
+    // Q1 was merged into Q42; Q42's revision is known and current.
+    let filter = Filter::ItemRevisions {
+        items: vec![1, 42],
+        revisions: vec![0, q42],
+    };
+    let mut opts = EntityOptions::default();
+    opts.scan.filter = Some(
+        filter
+            .compile_with(&Indexes {
+                redirects: Some(redirects),
+                ..Default::default()
+            })
+            .unwrap()
+            .into(),
+    );
+    let (rs, stats) = collect(&dump, &opts);
+    let got: Vec<(String, Vec<String>)> = rs
+        .iter()
+        .map(|r| (r.entity.id.clone(), r.merged_from.clone()))
+        .collect();
+    assert_eq!(got, [("Q42".to_string(), vec!["Q1".to_string()])]);
+    assert_eq!(stats.unchanged, 0);
+    // Without the redirect index, Q42 is unchanged and skipped.
+    let mut plain = EntityOptions::default();
+    plain.scan.filter = Some(
+        Filter::ItemRevisions {
+            items: vec![1, 42],
+            revisions: vec![0, q42],
+        }
+        .compile(None)
+        .unwrap()
+        .into(),
+    );
+    let (rs, stats) = collect(&dump, &plain);
+    assert!(rs.is_empty());
+    assert_eq!(stats.unchanged, 1);
+}

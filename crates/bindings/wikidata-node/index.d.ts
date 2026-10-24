@@ -152,6 +152,8 @@ export interface NativeDownloadOptions {
   date?: string
   /** The file of the dump (default `all.json.bz2`). */
   file?: string
+  /** SQL tables of the database dump instead (`["redirect", "page"]`). */
+  tables?: Array<string>
   /** Where to put it. */
   dir: string
   /** Check the SHA-1 (default true). */
@@ -159,8 +161,16 @@ export interface NativeDownloadOptions {
   /** HTTP options (connections per server, range size, …). */
   open?: NativeOpenOptions
 }
-/** Download a dump; status events carry its progress. */
+/**
+ * Download a dump (or, with `tables`, SQL tables of a database dump);
+ * status events carry its progress.
+ */
 export declare function downloadDump(options: NativeDownloadOptions, callback: (event: unknown) => void): NativeStream
+/**
+ * The newest complete dump: the entity dump of `file`, or, with
+ * `tables`, the database dump whose tables are all done.
+ */
+export declare function latestDump(options: NativeDownloadOptions): Promise<unknown>
 /** The library version. */
 export declare function version(): string
 /** Worker threads still running (for tests: 0 once every task ended). */

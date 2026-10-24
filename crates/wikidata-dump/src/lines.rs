@@ -53,6 +53,9 @@ pub struct BlockStart {
     pub blocks: u64,
     /// bzip2: the streams that ended before it.
     pub streams: u64,
+    /// Plain JSON: the block is the input itself (its bytes are input
+    /// bytes).
+    pub plain: bool,
 }
 
 /// Where a read can start again ([`crate::ReadOptions::resume`]): at the
@@ -78,6 +81,16 @@ pub struct ResumePoint {
     pub array: bool,
     /// The array's closing `]` was read before the resume point.
     pub closed: bool,
+    /// Plain JSON: `skip` counts input bytes too.
+    pub plain: bool,
+}
+
+impl ResumePoint {
+    /// The byte of the input reading resumes at: the bzip2 block's first
+    /// byte, or, for plain JSON, the first unread byte itself.
+    pub fn input_offset(&self) -> u64 {
+        self.bit / 8 + if self.plain { self.skip } else { 0 }
+    }
 }
 
 /// Whole lines of a dump (see the module docs).
@@ -262,6 +275,7 @@ impl<I: Iterator<Item = Result<Block>>> Splitter<I> {
             chunks: self.index,
             array: self.framing == Framing::Array,
             closed: self.closed,
+            plain: b.plain,
         })
     }
 

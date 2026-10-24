@@ -394,7 +394,9 @@ Items the index knows are decided from their id, before parsing; an item
 newer than the index is decided from its own claims, its places looked up
 in the index. With a `placeIndex`, `languages` and `sitelinks` rules
 (`{ by: "P17", map, always }`) also take the country from it for an item
-whose own claims choose nothing, so a village gets its country's language.
+whose own claims choose nothing, so a village gets its country's language;
+an item newer than the index is placed by its P131 and P159, as
+`inCountry` places it.
 
 `buildPlaceIndex: "places.wdp"` builds it as a by-product of any pass, like
 `buildClassIndex` (both at once in one pass: `ClassIndex.build(input,
@@ -635,6 +637,21 @@ const { path, sha1, bytesResumed } = await downloadDump({
 A file appears under `wikidata-<date>-all.json.bz2` only when it is
 complete and verified; until then it is `….part` (and `….part.state`).
 
+The SQL tables the [redirect index](#merges-and-deletions) reads come from
+the database dumps, fetched the same way: the newest date whose tables are
+all done (from its `dumpstatus.json`), or a given one.
+
+```ts
+import { downloadSqlDumps, latestDump, RedirectIndex } from "@wikidata-rs/node";
+
+const { date, files } = await downloadSqlDumps({ dir: "/data/sql" }); // tables: ["redirect", "page"] by default
+const redirects = await RedirectIndex.build({ redirects: files[0].path, pages: files[1].path });
+
+// Only the newest complete dump's date and files (to name a folder first):
+await latestDump();                                  // the entity dump: { date: "20261019", files: [{ name, url, sha1, … }] }
+await latestDump({ tables: ["redirect", "page"] }); // the database dump
+```
+
 ### Streams
 
 `entities()` returns an `EntityStream`:
@@ -683,6 +700,8 @@ per connection.
 | `readRedirects(RedirectIndexOptions)` | The SQL dumps' item redirects, `{ from, to }`. |
 | `liveChanges(LiveOptions)` → `EntityStream<LiveChange, LiveStats>` | Live changes, resumable. |
 | `downloadDump(DownloadOptions)` → `Promise<DownloadResult>` | A verified, resumable local copy of a dump. |
+| `downloadSqlDumps(SqlDownloadOptions)` → `Promise<{ date, files }>` | The same for SQL tables of a database dump. |
+| `latestDump(LatestDumpOptions)` → `Promise<DumpStatus>` | The newest complete entity or database dump. |
 | `EntityStream<T>` | See [Streams](#streams). |
 | `EXTERNAL_IDS`, `externalIdUrl(key, value)` | The external identifier table and URLs. |
 | `version()` | The version of the loaded native library. |
@@ -700,10 +719,11 @@ them. The main types are:
 - **Filters**: `Filter`, `ItemNumbers`, `Revisions`.
 - **Options**: `OpenOptions`, `CommonOptions`, `EntityOptions` (with
   `ByClaim`), `ExtractOptions`, `ClassIndexOptions`, `PlaceIndexOptions`,
-  `RedirectIndexOptions`, `LiveOptions`, `DownloadOptions`.
+  `RedirectIndexOptions`, `LiveOptions`, `DownloadOptions`,
+  `SqlDownloadOptions`, `LatestDumpOptions`.
 - **Results**: `ScanStats` (with `TypeCounts` and `LabelStats`),
   `ExtractStats`, `FileInfo`, `Checkpoint`, `LiveChange`, `LiveStats`,
-  `DownloadResult`.
+  `DownloadResult`, `DumpStatus`.
 - **Progress**: `Progress`, `DownloadProgress`.
 
 ## Errors

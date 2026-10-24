@@ -59,6 +59,14 @@ fn check(path: &std::path::Path, n: usize, min_chunks: usize) {
         if k % 3 != 0 && min_chunks > 5 {
             continue;
         }
+        if path.extension().is_some_and(|e| e == "json") {
+            // Plain JSON: the offset is the first unread line's own byte.
+            let bytes = std::fs::read(path).unwrap();
+            let at = r.input_offset() as usize;
+            assert_eq!(bytes[at - 1], b'\n', "chunk {k}");
+            let next = all.get(done).map(String::as_bytes);
+            assert!(next.is_none_or(|n| bytes[at..].starts_with(n)), "chunk {k}");
+        }
         let rest: Vec<String> = lines(&dump, Some(*r)).into_iter().flat_map(|c| c.0).collect();
         assert_eq!(rest, all[done..], "resuming after chunk {k}");
     }

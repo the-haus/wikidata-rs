@@ -721,6 +721,23 @@ impl Known {
         Known { keys, revisions }
     }
 
+    /// Drop the known revisions of `keys`.
+    fn forget(&mut self, keys: &[i64]) {
+        if keys.is_empty() {
+            return;
+        }
+        let keys: FxHashSet<i64> = keys.iter().copied().collect();
+        let (mut ks, mut rs) = (Vec::with_capacity(self.keys.len()), Vec::with_capacity(self.keys.len()));
+        for (&k, &r) in self.keys.iter().zip(&self.revisions) {
+            if !keys.contains(&k) {
+                ks.push(k);
+                rs.push(r);
+            }
+        }
+        self.keys = ks;
+        self.revisions = rs;
+    }
+
     #[inline]
     fn get(&self, key: i64) -> Option<u64> {
         self.keys.binary_search(&key).ok().map(|i| self.revisions[i])
@@ -768,15 +785,22 @@ fn value_needle(v: &str) -> Option<Vec<u8>> {
 
 /// An `ids` node: with a redirect index, it also matches the items the
 /// requested ones redirect to.
-fn ids_node(keys: Vec<i64>, known: Option<Known>, indexes: &Indexes<'_>) -> Node {
+fn ids_node(keys: Vec<i64>, mut known: Option<Known>, indexes: &Indexes<'_>) -> Node {
     let requested = id_set(keys.iter().copied());
     let set = match &indexes.redirects {
         Some(r) => {
-            let targets = keys
+            let targets: Vec<i64> = keys
                 .iter()
                 .filter_map(|&k| u32::try_from(k).ok())
                 .filter_map(|q| r.resolve(q))
-                .map(i64::from);
+                .map(i64::from)
+                .collect();
+            // An item another requested id was merged into must come
+            // through even when its own revision is known and unchanged:
+            // the merge is news for the id merged into it.
+            if let Some(k) = &mut known {
+                k.forget(&targets);
+            }
             id_set(keys.iter().copied().chain(targets))
         }
         None => requested.clone(),

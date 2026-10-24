@@ -19,4 +19,5 @@ memchr.workspace = true
 crc32fast.workspace = true
 crossbeam-channel.workspace = true
 sha1.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true

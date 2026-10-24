@@ -579,6 +579,7 @@ impl<I: Iterator<Item = Result<Decoded>>> Blocks<I> {
 
     fn block(&mut self, data: Vec<u8>, crc: u32, bit: u64) -> Vec<u8> {
         self.last_start = Some(crate::BlockStart {
+            plain: false,
             bit,
             crc: self.combined,
             blocks: self.stats.blocks,

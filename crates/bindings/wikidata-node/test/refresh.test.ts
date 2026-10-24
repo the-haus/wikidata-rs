@@ -75,6 +75,12 @@ describe("checkpoints", () => {
       }
       expect(last).toBeDefined();
       expect(stream.checkpoint).toEqual(last);
+      if (input === plain) {
+        // The first unread line starts at the offset.
+        const text = readFileSync(plain);
+        expect(text[last!.offset - 1]).toBe(0x0a);
+        expect(text.subarray(last!.offset, last!.offset + 2).toString()).toBe('{"');
+      }
       // Through JSON, as a caller stores it.
       const cp = JSON.parse(JSON.stringify(last)) as Checkpoint;
       const resumed = streamEntities(input, { filter, json: false, resumeFrom: cp });
@@ -125,6 +131,21 @@ describe("redirects", () => {
     ]);
     expect(stats.deleted).toEqual(["Q3"]);
     expect(stats.newer).toEqual(["Q999999999"]);
+  });
+});
+
+describe("merges into known items", () => {
+  it("come through even when the item merged into is unchanged", async () => {
+    const redirects = await RedirectIndex.build({
+      redirects: fixture("wikidatawiki-redirect.sql"),
+      pages: fixture("wikidatawiki-page.sql"),
+    });
+    const { ids, revisions } = sampleRevisions();
+    // Q1 was merged into Q42; Q42's revision is known and current.
+    const filter = { ids: Uint32Array.of(1, 42), revisions: Float64Array.of(0, revisions[ids.indexOf("Q42")]!) };
+    const s = streamEntities(sample, { filter, redirects, json: false });
+    expect((await s.toArray()).map((e) => [e.id, e.mergedFrom])).toEqual([["Q42", ["Q1"]]]);
+    expect((await s.stats).unchanged).toBe(0);
   });
 });
 

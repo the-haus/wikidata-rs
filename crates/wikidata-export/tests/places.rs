@@ -159,3 +159,52 @@ fn languages_by_country_through_the_place_index() {
     );
     assert_eq!(langs(&rs, "Q9005"), ["en"], "London is not Dutch");
 }
+
+/// An item newer than the place index gets its country's languages from
+/// its P131, as `inCountry` places it (Festimap's W-18).
+#[test]
+fn languages_for_items_newer_than_the_index() {
+    let d = tmp();
+    let text = std::fs::read_to_string(places_path()).unwrap();
+    let older: Vec<&str> = text.lines().filter(|l| !l.contains(r#""id":"Q9009""#)).collect();
+    let older = write(&d, "older.json", older.join("\n").replace("},\n]", "}\n]").as_bytes());
+    let index = Arc::new(index_of(&older));
+    assert!(index.country_of("Q9009").is_empty());
+    let dump = Dump::open(places_path().as_path()).unwrap();
+    let mut opts = EntityOptions {
+        languages_by: Some(wikidata_export::ByClaim {
+            properties: vec![wikidata_model::Pid(17)],
+            map: [("Q55".to_string(), vec!["nl".to_string()])].into(),
+            always: vec!["en".into()],
+            places: Some(index.clone()),
+        }),
+        ..Default::default()
+    };
+    // P131 is read for the rule, though `properties` does not keep it.
+    opts.model.properties = Some(vec![wikidata_model::Pid(31)]);
+    let f = Filter::parse_json(r#"{"inCountry":"Q55"}"#).unwrap();
+    opts.scan.filter = Some(
+        f.compile_with(&Indexes {
+            places: Some(index),
+            ..Default::default()
+        })
+        .unwrap()
+        .into(),
+    );
+    let (rs, _) = collect(&dump, &opts);
+    // The festival (P131 Schaesberg, no P17) is newer than the index.
+    let fest = &rs
+        .iter()
+        .find(|r| r.entity.id == "Q9009")
+        .expect("matched by inCountry")
+        .entity;
+    assert_eq!(
+        fest.labels.iter().map(|(l, _)| l.as_str()).collect::<Vec<_>>(),
+        ["nl", "en"]
+    );
+    assert_eq!(fest.label.as_ref().unwrap().language, "nl");
+    assert!(
+        fest.claims.get(&wikidata_model::Pid(131)).is_none(),
+        "P131 read, not kept"
+    );
+}

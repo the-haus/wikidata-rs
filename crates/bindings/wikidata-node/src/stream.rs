@@ -49,7 +49,7 @@ impl StreamEvent {
                 o.set("type", "checkpoint")?;
                 let p = &cp.position;
                 o.set("input", cp.input.as_str())?;
-                o.set("offset", (p.bit / 8) as f64)?;
+                o.set("offset", p.input_offset() as f64)?;
                 o.set("block", p.blocks as f64)?;
                 o.set("chunk", p.chunks as f64)?;
                 o.set("bytesOut", p.offset as f64)?;

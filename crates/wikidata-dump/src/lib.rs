@@ -239,6 +239,7 @@ impl<R: Read> Iterator for ReadChunks<R> {
             Ok(n) => {
                 let start = self.offset.map(|o| BlockStart {
                     bit: o * 8,
+                    plain: true,
                     ..Default::default()
                 });
                 if let Some(o) = &mut self.offset {

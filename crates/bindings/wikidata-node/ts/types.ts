@@ -668,8 +668,10 @@ export interface LiveStats {
   lastEventId: string | null;
 }
 
-/** Progress of {@link downloadDump}. */
+/** Progress of {@link downloadDump} and {@link downloadSqlDumps}. */
 export interface DownloadProgress {
+  /** The file being downloaded. */
+  file: string;
   /** Bytes on disk (resumed ones included). */
   bytesDone: number;
   bytesTotal: number;
@@ -700,6 +702,44 @@ export interface DownloadOptions extends OpenOptions {
   verify?: boolean;
   onProgress?: (p: DownloadProgress) => void;
   signal?: AbortSignal;
+}
+
+/** Options for {@link downloadSqlDumps}. */
+export interface SqlDownloadOptions extends OpenOptions {
+  /** Where to put the files. */
+  dir: string | URL;
+  /** The database dump's date (`20261001`), or `"latest"` (the default): the newest whose tables are all done. */
+  date?: string;
+  /** The tables (default `["redirect", "page"]`, what {@link RedirectIndex.build} reads). */
+  tables?: string[];
+  /** The database dumps' directory (default `https://dumps.wikimedia.org/wikidatawiki/`). */
+  base?: string;
+  /** The same directory on mirrors. */
+  mirrors?: string[];
+  /** Range size in bytes (default 8 MiB). */
+  rangeSize?: number;
+  /** Check the SHA-1s (default true). */
+  verify?: boolean;
+  onProgress?: (p: DownloadProgress) => void;
+  signal?: AbortSignal;
+}
+
+/** Options for {@link latestDump}. */
+export interface LatestDumpOptions extends OpenOptions {
+  /** SQL tables of the database dumps (`["redirect", "page"]`); without them, the entity dump of `file`. */
+  tables?: string[];
+  /** The entity dump's file (default `all.json.bz2`). */
+  file?: string;
+  /** The dumps' directory (default: the entity dumps, or with `tables` the database dumps, on dumps.wikimedia.org). */
+  base?: string;
+}
+
+/** The newest complete dump, from {@link latestDump}. */
+export interface DumpStatus {
+  /** Its date (`20261001`): the folder to download into. */
+  date: string;
+  /** The files asked for, in that order. */
+  files: { part: string; name: string; url: string; size: number | null; sha1: string }[];
 }
 
 /** What {@link downloadDump} did. */

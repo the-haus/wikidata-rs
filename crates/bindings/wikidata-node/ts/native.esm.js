@@ -80,6 +80,7 @@ export const {
   buildRedirects,
   live,
   downloadDump,
+  latestDump,
   version,
   activeThreads,
   externalIdTable,

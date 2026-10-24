@@ -1123,7 +1123,7 @@ dependencies = [
 
 [[package]]
 name = "wikidata-cli"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "bzip2",
@@ -1138,13 +1138,14 @@ dependencies = [
 
 [[package]]
 name = "wikidata-dump"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "bzip2",
  "crc32fast",
  "crossbeam-channel",
  "flate2",
  "memchr",
+ "serde_json",
  "sha1",
  "thiserror",
  "ureq",
@@ -1153,7 +1154,7 @@ dependencies = [
 
 [[package]]
 name = "wikidata-export"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "aho-corasick",
  "bzip2",
@@ -1169,7 +1170,7 @@ dependencies = [
 
 [[package]]
 name = "wikidata-filter"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -1183,7 +1184,7 @@ dependencies = [
 
 [[package]]
 name = "wikidata-model"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "memchr",
  "rustc-hash",
@@ -1195,7 +1196,7 @@ dependencies = [
 
 [[package]]
 name = "wikidata-node"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "mimalloc",
  "napi",

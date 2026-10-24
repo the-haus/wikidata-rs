@@ -84,8 +84,8 @@ impl ByClaim {
             }
         }
         if let (true, Some(places)) = (out.is_empty(), &self.places) {
-            for c in places.country_of(&e.id) {
-                for l in self.map.get(&c).into_iter().flatten() {
+            for c in countries(places, e) {
+                for l in self.map.get(&format!("Q{c}")).into_iter().flatten() {
                     if !out.contains(l) {
                         out.push(l.clone());
                     }
@@ -99,6 +99,30 @@ impl ByClaim {
         }
         out
     }
+}
+
+/// The countries of `e` by the place index: its own entry, or, for an
+/// item newer than the index, the countries of its P131 and P159 places
+/// (as the `inCountry` filter decides).
+fn countries(places: &PlaceIndex, e: &Entity) -> Vec<u32> {
+    let q = e.id.strip_prefix('Q').and_then(|n| n.parse::<u32>().ok());
+    if let Some(cs) = q.map(|q| places.countries(q)).filter(|cs| !cs.is_empty()) {
+        return cs.to_vec();
+    }
+    let mut out: Vec<u32> = Vec::new();
+    for p in [131, 159] {
+        let values = truthy(e.statements(Pid(p)))
+            .filter_map(|s| s.value.entity_id())
+            .filter_map(|id| id.strip_prefix('Q')?.parse::<u32>().ok());
+        for place in values {
+            for &c in places.countries(place) {
+                if !out.contains(&c) {
+                    out.push(c);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Keep `chain`'s languages of `terms`, in `chain` order.
@@ -181,7 +205,10 @@ pub fn entities(
     let mut extra: Vec<Pid> = Vec::new();
     for rule in [&opts.languages_by, &opts.sitelinks_by].into_iter().flatten() {
         if let Some(ps) = &mut model.properties {
-            for p in &rule.properties {
+            // With a place index, an item newer than it is placed by its
+            // P131 and P159.
+            let places = rule.places.as_ref().map_or(&[][..], |_| &[Pid(131), Pid(159)][..]);
+            for p in rule.properties.iter().chain(places) {
                 if !ps.contains(p) {
                     ps.push(*p);
                     extra.push(*p);

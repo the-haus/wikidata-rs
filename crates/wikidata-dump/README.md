@@ -36,9 +36,9 @@ for chunk in dump.chunks(&ReadOptions::default())? {
   with `lastrevid` and `modified`; redirects are reported.
 - `sql`: MediaWiki's SQL dumps (`page`, `redirect`, …), their rows
   parsed statement by statement. `sse`: server-sent events (EventStreams)
-  resumed with `Last-Event-ID`. `download`: the newest complete dump,
-  segmented across mirrors into one preallocated file, resumable, SHA-1
-  verified.
+  resumed with `Last-Event-ID`. `download`: the newest complete dump (or
+  SQL tables of a database dump), segmented across mirrors into one
+  preallocated file, resumable, SHA-1 verified.
 - A truncated input is an error (`DumpError::Truncated`), unless
   `allow_truncated` is set.
 - `parallel::ordered_map`: order-preserving parallel map with a bounded
