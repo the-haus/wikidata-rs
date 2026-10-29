@@ -14,6 +14,7 @@ export interface NativeOptions {
   qualifierProperties?: string[];
   languagesByJson?: string;
   sitelinksByJson?: string;
+  sitelinkCounts?: boolean;
   classIndexOutput?: string;
   classIndex?: number;
   threads?: number;
@@ -64,6 +65,9 @@ export interface NativeEntityBatch {
   /** With merged items only. */
   mergedFrom?: Uint32Array;
   mergedFromOffsets?: Uint32Array;
+  /** With `sitelinkCounts` only (0xffffffff: not counted). */
+  sitelinkCounts?: Uint32Array;
+  wikipediaCounts?: Uint32Array;
 }
 
 export interface NativeJsonBatch {

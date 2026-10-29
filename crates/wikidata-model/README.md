@@ -31,6 +31,12 @@ println!("{}", e.to_json());
 - Ranks (deprecated dropped by default, `best_rank`), qualifiers (all, or
   only `qualifier_properties`), references, sitelinks with URLs, lexemes,
   properties.
+- Sitelinks: the `sitelinks` sites for every entity and, with
+  `sitelinks_for` (`SitesFor`), the sites of some groups (every Wikipedia)
+  for the items of some classes, decided from P31 before the sitelinks are
+  read; `sitelink_counts` counts them all, and the Wikipedia ones, the
+  skipped ones included (`sitelink_count`, `wikipedia_count`). `sites`
+  has the site groups (`site_group`, `is_wikipedia`) and page URLs.
 - Derived fields from truthy statements: `instance_of`, `subclass_of`,
   `country`, `coordinates`, `inception`, `dissolved`, `image`, `website`,
   `external_ids` (the `EXTERNAL_IDS` table).

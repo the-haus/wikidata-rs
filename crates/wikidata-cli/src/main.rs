@@ -5,7 +5,7 @@ use std::io::{BufWriter, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 use wikidata_dump::download::{download, DownloadOptions};
 use wikidata_export::{
@@ -14,7 +14,7 @@ use wikidata_export::{
     LabelOptions, LiveOptions, ModelOptions, PlaceIndex, Progress, RedirectIndex, RedirectOptions, ScanOptions,
     WriteOptions,
 };
-use wikidata_model::Pid;
+use wikidata_model::{id_number, Pid, SitesFor};
 
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
@@ -173,6 +173,18 @@ struct ModelArgs {
     /// Sitelinks to keep: nlwiki,enwiki (default: all; "none" for none).
     #[arg(long, value_delimiter = ',')]
     sites: Vec<String>,
+    /// Keep more sitelinks for the items of these classes (their P31):
+    /// Q5,Q215380; which ones: --sites-for-group.
+    #[arg(long, value_delimiter = ',')]
+    sites_for: Vec<String>,
+    /// The site groups kept for --sites-for: wikipedia,wikiquote,
+    /// wikivoyage, …, special (default: every site).
+    #[arg(long, value_delimiter = ',', requires = "sites_for")]
+    sites_for_group: Vec<String>,
+    /// Count each entity's sitelinks, the pruned ones included
+    /// (sitelinkCount, wikipediaCount).
+    #[arg(long)]
+    sitelink_counts: bool,
     /// Properties to keep claims for: P31,P17 (default: all; "none" for
     /// none; derived fields are computed anyway).
     #[arg(long, value_delimiter = ',')]
@@ -562,10 +574,30 @@ impl ModelArgs {
                     .collect::<Result<_>>()?,
             ),
         };
+        let sitelinks_for = match self.sites_for.is_empty() {
+            true => None,
+            false => {
+                let f = SitesFor {
+                    instance_of: self.sites_for.clone(),
+                    groups: self.sites_for_group.clone(),
+                };
+                if let Some(c) = f
+                    .instance_of
+                    .iter()
+                    .find(|c| !c.starts_with('Q') || id_number(c).is_none())
+                {
+                    bail!("--sites-for: not an item: {c:?}");
+                }
+                f.validate().map_err(|e| anyhow!("--sites-for-group: {e}"))?;
+                Some(f)
+            }
+        };
         Ok(ModelOptions {
             languages: list_or_none(&self.languages),
             qualifier_properties,
             sitelinks: list_or_none(&self.sites),
+            sitelinks_for,
+            sitelink_counts: self.sitelink_counts,
             properties,
             references: self.references,
             qualifiers: !self.no_qualifiers,

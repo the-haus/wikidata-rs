@@ -166,6 +166,9 @@ wikidata info wikidata-20261012-all.json.bz2
 # Normalised entities as JSON lines: Dutch places, labels in nl → en → mul
 wikidata cat $DUMP --claim P17=Q55 --has P625 --languages nl,en,mul --properties P31,P17,P625 > nl-places.jsonl
 
+# Artists: English and Dutch sitelinks for all, every Wikipedia for humans and groups, and how many there are
+wikidata cat $DUMP --has P434 --sites enwiki,nlwiki --sites-for Q5,Q215380 --sites-for-group wikipedia --sitelink-counts
+
 # A small subset to keep instead of the 103 GB dump, read back like the dump
 wikidata extract $DUMP --filter '{"any":[{"claim":"P17=Q55"},{"hasProperty":"P434"}]}' -o subset.jsonl.zst
 wikidata cat subset.jsonl.zst --id Q42
@@ -271,6 +274,7 @@ One entity, as `wikidata cat` and `entity.json` write it (shortened):
   "descriptions": { "nl": "land in West-Europa", "en": "country in western Europe" },
   "aliases": { "nl": ["Koninkrijk België"], "en": ["Kingdom of Belgium", "BE"] },
   "sitelinks": { "nlwiki": { "title": "België", "url": "https://nl.wikipedia.org/wiki/Belgi%C3%AB", "badges": [] } },
+  "sitelinkCount": 312, "wikipediaCount": 298,
   "claims": {
     "P31": [{ "value": { "type": "entity", "id": "Q6256" }, "rank": "preferred" }],
     "P571": [{ "value": { "type": "time", "time": "+1830-10-04T00:00:00Z", "iso": "1830-10-04", "precision": 11,
@@ -285,7 +289,10 @@ One entity, as `wikidata cat` and `entity.json` write it (shortened):
 }
 ```
 
-- Top-level keys are always present (`null`, `[]` or `{}` when empty).
+- Top-level keys are always present (`null`, `[]` or `{}` when empty),
+  but `sitelinkCount` and `wikipediaCount`, there only when asked for
+  (`sitelinkCounts`, `--sitelink-counts`): every sitelink and the
+  Wikipedia ones, those the site selection drops included.
 - Every value carries its `type`: `entity`, `string`, `externalId`, `url`,
   `media` (file and Commons page URL), `monolingual`, `time`, `quantity`,
   `coordinate`, `math`, `musicalNotation`, `geoShape`, `tabularData`,

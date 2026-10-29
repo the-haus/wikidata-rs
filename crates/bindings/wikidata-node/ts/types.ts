@@ -134,6 +134,10 @@ export interface Entity {
   descriptions: Record<string, string>;
   aliases: Record<string, string[]>;
   sitelinks: Record<string, Sitelink>;
+  /** With `sitelinkCounts`: the number of sitelinks, the pruned ones included. */
+  sitelinkCount?: number;
+  /** With `sitelinkCounts`: the number of Wikipedia sitelinks (see {@link EntityOptions.sitelinkCounts}), the pruned ones included. */
+  wikipediaCount?: number;
   claims: Record<string, Statement[]>;
   /** Lexemes only. */
   lemmas?: Record<string, string>;
@@ -225,6 +229,10 @@ export interface EntityRecord {
    * pass because of them); `[]` otherwise.
    */
   readonly mergedFrom: string[];
+  /** With `sitelinkCounts`: the number of sitelinks, the pruned ones included; `null` otherwise. */
+  readonly sitelinkCount: number | null;
+  /** With `sitelinkCounts`: the number of Wikipedia sitelinks, the pruned ones included; `null` otherwise. */
+  readonly wikipediaCount: number | null;
   /** The full entity (parsed once, on first access; needs `json: true`, the default). */
   readonly entity: Entity;
   /** The full entity's JSON text. */
@@ -488,16 +496,60 @@ export interface RedirectIndexLike {
  * `{ by: "P17", map: { Q55: ["nl"], Q183: ["de"] }, always: ["en", "mul"] }`
  * a Dutch item keeps `nl`, `en`, `mul` and a German one `de`, `en`, `mul`.
  * The values are read from the entity's truthy statements (the property
- * need not be among `properties`).
+ * need not be among `properties`). When several properties are named,
+ * the sites or languages all their values choose are kept (a union, in
+ * the order of `by`); with a `placeIndex`, an item whose claims choose
+ * nothing is looked up by its place.
  */
 export interface ByClaim {
-  /** The properties whose values choose (`"P17"`, `["P17", "P495"]`). */
-  by: string | string[];
-  /** Item id → languages (in fallback order) or sites. */
-  map: Record<string, string[]>;
+  /** The properties whose values choose (`"P17"`, `["P17", "P495"]`); default none. */
+  by?: string | string[];
+  /** Item id → languages (in fallback order) or sites; default none. */
+  map?: Record<string, string[]>;
   /** Kept for every entity, after the chosen ones. */
   always?: string[];
+  /**
+   * Sitelinks only: more sites for the items of some classes, on top of
+   * what `by`, `map` and `always` choose (which still apply to every
+   * item). See {@link SitesFor}.
+   */
+  allFor?: SitesFor;
 }
+
+/**
+ * The sites of a group, kept for the items of some classes:
+ * `{ instanceOf: ["Q5", "Q215380"], group: "wikipedia" }` keeps every
+ * Wikipedia sitelink of a human or a musical group. Matched against the
+ * item's truthy P31 values (not their subclasses), which are read before
+ * its sitelinks, so the other items' extra sitelinks are skipped without
+ * being built.
+ */
+export interface SitesFor {
+  /** The classes, as P31 values (`"Q5"`). */
+  instanceOf: string | string[];
+  /**
+   * Wikidata's site groups (default: every site): `"wikipedia"` (the
+   * `<code>wiki` sites: not `commonswiki`, `specieswiki`, `wikidatawiki`,
+   * `metawiki`, `mediawikiwiki`, `sourceswiki`, `wikimaniawiki`,
+   * `foundationwiki`, `outreachwiki`, `incubatorwiki`,
+   * `wikifunctionswiki`), `"wikivoyage"`, `"wikiquote"`, `"wikisource"`,
+   * `"wikinews"`, `"wikibooks"`, `"wikiversity"`, `"wiktionary"`, or
+   * `"special"` (those other sites).
+   */
+  group?: SiteGroup | SiteGroup[];
+}
+
+/** Wikidata's site groups. */
+export type SiteGroup =
+  | "wikipedia"
+  | "wikivoyage"
+  | "wikiquote"
+  | "wikisource"
+  | "wikinews"
+  | "wikibooks"
+  | "wikiversity"
+  | "wiktionary"
+  | "special";
 
 /** Options for `entities()`. */
 export interface EntityOptions extends CommonOptions {
@@ -509,6 +561,15 @@ export interface EntityOptions extends CommonOptions {
   languages?: string[] | ByClaim;
   /** Sites to keep sitelinks for (default: all), or a {@link ByClaim} rule. */
   sitelinks?: string[] | ByClaim;
+  /**
+   * Count each entity's sitelinks, the pruned ones included, into
+   * `sitelinkCount` (every site) and `wikipediaCount` (the `<code>wiki`
+   * sites of the `wikipedia` group, not Commons, Wikispecies, Wikidata,
+   * Meta and the other special sites), on the record (without parsing
+   * its JSON) and on the entity. The skipped sitelinks are counted from
+   * their keys, without being built. Default false.
+   */
+  sitelinkCounts?: boolean;
   /** Properties to keep claims for (default: all). Derived fields are computed anyway. */
   properties?: string[];
   /** Keep labels (default true). */

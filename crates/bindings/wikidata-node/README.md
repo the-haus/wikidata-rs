@@ -192,6 +192,7 @@ fields. Benchmarks for the CLI and the method are in the repository's
 | `externalIds` | see `EXTERNAL_IDS` | `{ musicbrainzArtist, discogsArtist, osmRelation, geonames, viaf, … }` |
 | `matchedBy` | the filter | the [named filters](#named-filters) that match the entity, `[]` without names |
 | `mergedFrom` | `redirects` | the requested ids [merged into](#merges-and-deletions) this entity, `[]` otherwise |
+| `sitelinkCount`, `wikipediaCount` | `sitelinkCounts` | its sitelinks and its Wikipedia sitelinks, [the pruned ones included](#sitelink-counts); `null` otherwise |
 | `entity` | | the full `Entity`, parsed on first access |
 | `json` | | its JSON text |
 
@@ -224,8 +225,57 @@ dump.entities({
 // an item without a mapped country en, mul.
 ```
 
-`by` takes one property or several (`["P17", "P495"]`); the values are read
-from the truthy statements, whether or not `properties` keeps the claims.
+`by` takes one property or several (`["P17", "P495"]`, the union of what
+their values choose, in that order); the values are read from the truthy
+statements, whether or not `properties` keeps the claims.
+
+A sitelinks rule can keep more sites for the items of some classes with
+`allFor`: every Wikipedia for artists, English and the local language for
+everything else.
+
+```ts
+dump.entities({
+  sitelinks: {
+    by: "P17",
+    map: { Q55: ["nlwiki"], Q183: ["dewiki"] },
+    always: ["enwiki"],
+    allFor: { instanceOf: ["Q5", "Q215380", "Q9212979", "Q5741069", "Q2088357", "Q281643"], group: "wikipedia" },
+  },
+  placeIndex,
+});
+// A Dutch singer keeps every Wikipedia it has (~80 for a well-known one);
+// Amsterdam keeps nlwiki and enwiki, not its ~300.
+```
+
+`instanceOf` is matched against the item's truthy P31 values (not their
+subclasses). They come before the sitelinks in the dumps, so the other
+items' extra sitelinks are skipped as they are read, never built. `group`
+is one or several of Wikidata's site groups: `wikipedia` (the
+`<code>wiki` sites), `wikivoyage`, `wikiquote`, `wikisource`, `wikinews`,
+`wikibooks`, `wikiversity`, `wiktionary`, and `special` (`commonswiki`,
+`specieswiki`, `wikidatawiki`, `metawiki`, `mediawikiwiki`,
+`sourceswiki`, `wikimaniawiki`, `foundationwiki`, `outreachwiki`,
+`incubatorwiki`, `wikifunctionswiki`); without it, every site. `by`,
+`map` and `always` still choose for every item, and the place index
+still finds a country for one whose claims choose nothing. Without `by`
+(`{ always: ["enwiki"], allFor }`), every item keeps `always`.
+
+#### Sitelink counts
+
+How many Wikipedias an item is in is a cheap notability signal, without
+keeping the titles:
+
+```ts
+for await (const e of dump.entities({ sitelinks: ["enwiki"], sitelinkCounts: true, json: false })) {
+  e.sitelinkCount;  // 87: every sitelink, Commons and Wikiquote included
+  e.wikipediaCount; // 79: the Wikipedia ones
+}
+```
+
+The counts include the sitelinks that `sitelinks` prunes; those are
+counted from their keys as they are skipped, without being built. They are
+summary fields (no JSON parse) and `entity.sitelinkCount` /
+`entity.wikipediaCount` in the full entity.
 
 Every claim value carries a `type`:
 
@@ -718,7 +768,7 @@ them. The main types are:
   `QuantityValue`, `CoordinateValue` and the other value shapes.
 - **Filters**: `Filter`, `ItemNumbers`, `Revisions`.
 - **Options**: `OpenOptions`, `CommonOptions`, `EntityOptions` (with
-  `ByClaim`), `ExtractOptions`, `ClassIndexOptions`, `PlaceIndexOptions`,
+  `ByClaim`, `SitesFor`, `SiteGroup`), `ExtractOptions`, `ClassIndexOptions`, `PlaceIndexOptions`,
   `RedirectIndexOptions`, `LiveOptions`, `DownloadOptions`,
   `SqlDownloadOptions`, `LatestDumpOptions`.
 - **Results**: `ScanStats` (with `TypeCounts` and `LabelStats`),

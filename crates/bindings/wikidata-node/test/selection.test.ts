@@ -174,6 +174,79 @@ describe("languages and sitelinks by claim", () => {
     await expect(
       streamEntities(sample, { languages: { map: {} } as never }).toArray(),
     ).rejects.toThrow(/by/);
+    await expect(
+      streamEntities(sample, { languages: { by: "P17", map: {}, allFor: { instanceOf: "Q5" } } }).toArray(),
+    ).rejects.toThrow(/only a sitelinks rule/);
+    await expect(
+      streamEntities(sample, { sitelinks: { allFor: { instanceOf: "Q5", group: "wikipedias" as never } } }).toArray(),
+    ).rejects.toThrow(/unknown site group "wikipedias"/);
+    await expect(
+      streamEntities(sample, { sitelinks: { allFor: { instanceOf: "P31" } } }).toArray(),
+    ).rejects.toThrow(/not an item id/);
+  });
+});
+
+// Festimap's W-20 and W-21.
+describe("sitelink counts and every Wikipedia for some classes", () => {
+  it("count the pruned sitelinks, on the record and the entity", async () => {
+    const stream = streamEntities(sample, {
+      filter: { type: "item" },
+      sitelinks: ["enwiki"],
+      sitelinkCounts: true,
+    });
+    const got = new Map((await stream.toArray()).map((e) => [e.id, e]));
+    const be = got.get("Q31")!;
+    // nlwiki, enwiki, commonswiki, zh_yuewiki.
+    expect([be.sitelinkCount, be.wikipediaCount]).toEqual([4, 3]);
+    expect([be.entity.sitelinkCount, be.entity.wikipediaCount]).toEqual([4, 3]);
+    expect(Object.keys(be.entity.sitelinks)).toEqual(["enwiki"]);
+    expect(be.toJSON()).toMatchObject({ sitelinkCount: 4, wikipediaCount: 3 });
+    expect([got.get("Q42")!.sitelinkCount, got.get("Q42")!.wikipediaCount]).toEqual([2, 2]);
+    expect([got.get("Q5001")!.sitelinkCount, got.get("Q5001")!.wikipediaCount]).toEqual([0, 0]);
+    // Without the JSON too.
+    const summary = await streamEntities(sample, {
+      filter: { ids: ["Q31"] },
+      sitelinks: [],
+      sitelinkCounts: true,
+      json: false,
+    }).toArray();
+    expect([summary[0]!.sitelinkCount, summary[0]!.wikipediaCount]).toEqual([4, 3]);
+    // Off by default.
+    const [plain] = await streamEntities(sample, { filter: { ids: ["Q31"] } }).toArray();
+    expect([plain!.sitelinkCount, plain!.wikipediaCount]).toEqual([null, null]);
+    expect(plain!.entity.sitelinkCount).toBeUndefined();
+  });
+
+  it("keep every Wikipedia of the listed classes only", async () => {
+    const stream = streamEntities(sample, {
+      filter: { ids: ["Q31", "Q55", "Q42"] },
+      properties: ["P1"],
+      sitelinks: {
+        by: "P17",
+        map: { Q55: ["nlwiki"] },
+        always: ["enwiki"],
+        allFor: { instanceOf: ["Q5", "Q215380"], group: "wikipedia" },
+      },
+      sitelinkCounts: true,
+    });
+    const got = new Map((await stream.toArray()).map((e) => [e.id, e]));
+    // A human: every Wikipedia; countries: what their P17 chooses.
+    expect(Object.keys(got.get("Q42")!.entity.sitelinks)).toEqual(["enwiki", "nlwiki"]);
+    expect(got.get("Q42")!.entity.sitelinks.nlwiki!.title).toBeTruthy();
+    expect(Object.keys(got.get("Q55")!.entity.sitelinks)).toEqual(["nlwiki", "enwiki"]);
+    expect(Object.keys(got.get("Q31")!.entity.sitelinks)).toEqual(["enwiki"]);
+    expect(got.get("Q31")!.wikipediaCount).toBe(3);
+    // P31 and P17 are read for the rule, not kept.
+    expect(got.get("Q42")!.entity.claims).toEqual({});
+    // Without `by`: `always` for everyone, and the classes' sites.
+    const bare = await streamEntities(sample, {
+      filter: { ids: ["Q31", "Q42"] },
+      sitelinks: { always: ["enwiki"], allFor: { instanceOf: "Q5" } },
+    }).toArray();
+    expect(bare.map((e) => [e.id, Object.keys(e.entity.sitelinks)])).toEqual([
+      ["Q31", ["enwiki"]],
+      ["Q42", ["enwiki", "nlwiki"]],
+    ]);
   });
 });
 

@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use wikidata_dump::Dump;
 use wikidata_filter::{id_from_key, id_key, PlaceIndex, Pre};
-use wikidata_model::{parse_entity, truthy, Compiled, Entity, Map, ModelOptions, Pid, Text};
+use wikidata_model::{parse_entity, truthy, Compiled, Entity, Map, ModelOptions, Pid, SitesFor, Text};
 
 use crate::labels::{self, Collector, LabelOptions};
 use crate::scan::{scan_with, ChunkCounts, Event, Flow, ScanOptions, ScanStats, Work};
@@ -27,7 +27,7 @@ pub struct EntityOptions {
     /// `model.languages`).
     pub languages_by: Option<ByClaim>,
     /// Choose each entity's sitelinks by its claims (replaces
-    /// `model.sitelinks`).
+    /// `model.sitelinks` and `model.sitelinks_for`).
     pub sitelinks_by: Option<ByClaim>,
     /// Also collect the labels of the items the matching entities' kept
     /// claims refer to ([`ScanStats::referenced_labels`]; see
@@ -42,6 +42,11 @@ pub struct EntityOptions {
 /// for languages, the order is the fallback chain of `label` and
 /// `description`. With `places`, an entity whose claims choose nothing
 /// is looked up in the place index (its countries through P131 and P159).
+///
+/// For sitelinks, `all_for` widens the choice for the items of some
+/// classes: with `instance_of` `[Q5]` and `groups` `[wikipedia]`, a human
+/// keeps every Wikipedia sitelink besides the sites chosen above, and
+/// every other item exactly the sites chosen above.
 #[derive(Clone, Debug, Default)]
 pub struct ByClaim {
     /// The properties whose values choose (`P17`).
@@ -52,6 +57,8 @@ pub struct ByClaim {
     pub always: Vec<String>,
     /// Countries for the entities whose claims choose nothing.
     pub places: Option<Arc<PlaceIndex>>,
+    /// Sitelinks only: more sites for the items of these classes.
+    pub all_for: Option<SitesFor>,
 }
 
 impl ByClaim {
@@ -66,6 +73,13 @@ impl ByClaim {
             }
         }
         out
+    }
+
+    /// Whether `e` is one of `all_for`'s classes (its truthy P31).
+    fn widens(&self, e: &Entity) -> Option<&SitesFor> {
+        self.all_for
+            .as_ref()
+            .filter(|f| f.matches(truthy(e.statements(Pid(31))).filter_map(|s| s.value.entity_id())))
     }
 
     /// The languages or sites of `e`, in order.
@@ -203,12 +217,21 @@ pub fn entities(
     // Properties a rule reads but `properties` leaves out: parsed, read,
     // then dropped.
     let mut extra: Vec<Pid> = Vec::new();
+    if opts.languages_by.as_ref().is_some_and(|r| r.all_for.is_some()) {
+        return Err(ExportError::Invalid(
+            "all_for is a rule for sitelinks, not languages".into(),
+        ));
+    }
+    if let Some(f) = opts.sitelinks_by.as_ref().and_then(|r| r.all_for.as_ref()) {
+        f.validate().map_err(ExportError::Invalid)?;
+    }
     for rule in [&opts.languages_by, &opts.sitelinks_by].into_iter().flatten() {
         if let Some(ps) = &mut model.properties {
             // With a place index, an item newer than it is placed by its
             // P131 and P159.
             let places = rule.places.as_ref().map_or(&[][..], |_| &[Pid(131), Pid(159)][..]);
-            for p in rule.properties.iter().chain(places) {
+            let classes = rule.all_for.as_ref().map_or(&[][..], |_| &[Pid(31)][..]);
+            for p in rule.properties.iter().chain(places).chain(classes) {
                 if !ps.contains(p) {
                     ps.push(*p);
                     extra.push(*p);
@@ -221,6 +244,8 @@ pub fn entities(
     }
     if let Some(r) = &opts.sitelinks_by {
         model.sitelinks = Some(r.union());
+        // The parse keeps the extra sites for those items only.
+        model.sitelinks_for = r.all_for.clone();
     }
     let languages_by = opts.languages_by.clone();
     let sitelinks_by = opts.sitelinks_by.clone();
@@ -279,7 +304,10 @@ pub fn entities(
         }
         if let Some(r) = &sitelinks_by {
             let sites = r.select(&e);
-            e.sitelinks.0.retain(|(s, _)| sites.contains(s));
+            let wide = r.widens(&e);
+            e.sitelinks
+                .0
+                .retain(|(s, _)| sites.contains(s) || wide.is_some_and(|f| f.keeps_site(s)));
         }
         if !extra.is_empty() {
             e.claims.0.retain(|(p, _)| !extra.contains(p));

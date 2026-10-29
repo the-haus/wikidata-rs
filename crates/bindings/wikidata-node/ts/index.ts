@@ -150,6 +150,7 @@ function entityOptions(o: EntityOptions): NativeOptions {
   else if (o.languages !== undefined) out.languagesByJson = JSON.stringify(o.languages);
   if (Array.isArray(o.sitelinks)) out.sitelinks = [...o.sitelinks];
   else if (o.sitelinks !== undefined) out.sitelinksByJson = JSON.stringify(o.sitelinks);
+  if (o.sitelinkCounts !== undefined) out.sitelinkCounts = o.sitelinkCounts;
   if (o.properties !== undefined) out.properties = [...o.properties];
   if (o.labels !== undefined) out.labels = o.labels;
   if (o.descriptions !== undefined) out.descriptions = o.descriptions;

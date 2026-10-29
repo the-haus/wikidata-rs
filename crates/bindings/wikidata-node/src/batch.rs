@@ -80,6 +80,11 @@ pub(crate) struct EntityBatch {
     /// Requested items merged into the entity (redirect index), CSR.
     merged_from: Vec<u32>,
     merged_from_offsets: Vec<u32>,
+    /// With `sitelinkCounts`: all sitelinks and the Wikipedia ones, per
+    /// entity (`u32::MAX` when not counted).
+    sitelink_counts: Vec<u32>,
+    wikipedia_counts: Vec<u32>,
+    counted: bool,
     pub(crate) names: Arc<[String]>,
 }
 
@@ -180,6 +185,9 @@ impl EntityBatch {
         self.matched_by.extend_from_slice(&r.matched_by);
         self.matched_by_offsets.push(self.matched_by.len() as u32);
         q_numbers(&r.merged_from, &mut self.merged_from, &mut self.merged_from_offsets);
+        self.counted |= e.sitelink_count.is_some();
+        self.sitelink_counts.push(e.sitelink_count.unwrap_or(u32::MAX));
+        self.wikipedia_counts.push(e.wikipedia_count.unwrap_or(u32::MAX));
         if self.json_offsets.is_empty() {
             self.json_offsets.push(0);
         }
@@ -235,6 +243,16 @@ impl EntityBatch {
             o.set(
                 "mergedFromOffsets",
                 typed(env, &self.merged_from_offsets, TypedArrayType::Uint32)?,
+            )?;
+        }
+        if self.counted {
+            o.set(
+                "sitelinkCounts",
+                typed(env, &self.sitelink_counts, TypedArrayType::Uint32)?,
+            )?;
+            o.set(
+                "wikipediaCounts",
+                typed(env, &self.wikipedia_counts, TypedArrayType::Uint32)?,
             )?;
         }
         if !self.names.is_empty() {

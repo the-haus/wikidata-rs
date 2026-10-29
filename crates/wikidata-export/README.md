@@ -31,7 +31,9 @@ extract(&dump, &x, "nl.jsonl.zst", &mut |_| Flow::Continue)?;
   serialised on the workers, and the named filters it matched), in dump
   order, with `limit` and progress. `languages_by` / `sitelinks_by`
   (`ByClaim`) choose each entity's languages and sitelinks by its claims
-  (`P17` → `nl` for a Dutch item, `de` for a German one).
+  (`P17` → `nl` for a Dutch item, `de` for a German one); a sitelinks
+  rule's `all_for` keeps more sites (every Wikipedia) for the items of
+  some classes.
 - `extract` / `raw_lines`: the matching original lines, to `.jsonl.zst`,
   `.json.bz2`, `.json.gz`, … (compressed on every core).
 - `build_class_index` / `build_place_index`: the P279 hierarchy, or every

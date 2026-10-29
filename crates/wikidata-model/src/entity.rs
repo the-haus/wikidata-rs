@@ -473,6 +473,14 @@ pub struct Entity {
     pub aliases: Map<String, Vec<String>>,
     /// Sitelinks by site (`enwiki`, …).
     pub sitelinks: Map<String, Sitelink>,
+    /// With `sitelink_counts`: the number of sitelinks, the pruned ones
+    /// included.
+    pub sitelink_count: Option<u32>,
+    /// With `sitelink_counts`: the number of Wikipedia sitelinks
+    /// (`<code>wiki`, not Commons, Wikispecies, Wikidata, Meta and the other
+    /// special sites; see [`crate::sites::is_wikipedia`]), the pruned ones
+    /// included.
+    pub wikipedia_count: Option<u32>,
     /// Claims by property, in dump order.
     pub claims: Map<Pid, Vec<Statement>>,
     /// Derived fields.
@@ -511,7 +519,7 @@ impl Serialize for ExternalIds<'_> {
 impl Serialize for Entity {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         let d = &self.derived;
-        let mut st = s.serialize_struct("Entity", 24)?;
+        let mut st = s.serialize_struct("Entity", 26)?;
         st.serialize_field("id", &self.id)?;
         st.serialize_field("type", &self.kind)?;
         if self.kind == EntityType::Property {
@@ -532,6 +540,12 @@ impl Serialize for Entity {
         st.serialize_field("descriptions", &self.descriptions)?;
         st.serialize_field("aliases", &self.aliases)?;
         st.serialize_field("sitelinks", &self.sitelinks)?;
+        if let Some(n) = self.sitelink_count {
+            st.serialize_field("sitelinkCount", &n)?;
+        }
+        if let Some(n) = self.wikipedia_count {
+            st.serialize_field("wikipediaCount", &n)?;
+        }
         st.serialize_field("claims", &self.claims)?;
         if let Some(l) = &self.lexeme {
             st.serialize_field("lemmas", &l.lemmas)?;

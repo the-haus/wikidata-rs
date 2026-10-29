@@ -131,6 +131,7 @@ fn languages_by_country_through_the_place_index() {
         map: [("Q55".to_string(), vec!["nl".to_string()])].into(),
         always: vec!["en".into()],
         places,
+        all_for: None,
     };
     let opts = |places| EntityOptions {
         languages_by: Some(rule(places)),
@@ -177,6 +178,7 @@ fn languages_for_items_newer_than_the_index() {
             map: [("Q55".to_string(), vec!["nl".to_string()])].into(),
             always: vec!["en".into()],
             places: Some(index.clone()),
+            all_for: None,
         }),
         ..Default::default()
     };
@@ -207,4 +209,53 @@ fn languages_for_items_newer_than_the_index() {
         fest.claims.get(&wikidata_model::Pid(131)).is_none(),
         "P131 read, not kept"
     );
+}
+
+/// Every Wikipedia for the items of some classes, the country's wiki
+/// still chosen through the place index for both kinds (Festimap's W-21).
+#[test]
+fn every_wikipedia_for_artists_with_the_place_index() {
+    let d = tmp();
+    let item = |id: &str, class: &str| {
+        format!(
+            r#"{{"type":"item","id":"{id}","claims":{{"P31":[{{"mainsnak":{{"snaktype":"value","property":"P31","datavalue":{{"value":{{"entity-type":"item","id":"{class}"}},"type":"wikibase-entityid"}},"datatype":"wikibase-item"}},"type":"statement","rank":"normal"}}],"P131":[{{"mainsnak":{{"snaktype":"value","property":"P131","datavalue":{{"value":{{"entity-type":"item","id":"Q9002"}},"type":"wikibase-entityid"}},"datatype":"wikibase-item"}},"type":"statement","rank":"normal"}}]}},"sitelinks":{{"dewiki":{{"site":"dewiki","title":"A"}},"nlwiki":{{"site":"nlwiki","title":"B"}},"enwiki":{{"site":"enwiki","title":"C"}},"commonswiki":{{"site":"commonswiki","title":"D"}},"frwikivoyage":{{"site":"frwikivoyage","title":"E"}}}}}}"#
+        )
+    };
+    let path = write(
+        &d,
+        "people.json",
+        format!("[\n{},\n{}\n]\n", item("Q9100", "Q5"), item("Q9101", "Q8719053")).as_bytes(),
+    );
+    let rule = wikidata_export::ByClaim {
+        properties: vec![wikidata_model::Pid(17)],
+        map: [("Q55".to_string(), vec!["nlwiki".to_string()])].into(),
+        always: vec!["enwiki".into()],
+        places: Some(Arc::new(index_of(&places_path()))),
+        all_for: Some(wikidata_model::SitesFor {
+            instance_of: vec!["Q5".into(), "Q215380".into()],
+            groups: vec!["wikipedia".into()],
+        }),
+    };
+    let mut opts = EntityOptions {
+        sitelinks_by: Some(rule),
+        ..Default::default()
+    };
+    // P31 and P131 are read for the rule, though not kept.
+    opts.model.properties = Some(vec![wikidata_model::Pid(17)]);
+    opts.model.sitelink_counts = true;
+    let (rs, _) = collect(&Dump::open(path.as_path()).unwrap(), &opts);
+    let get = |id: &str| &rs.iter().find(|r| r.entity.id == id).unwrap().entity;
+    let sites = |id: &str| get(id).sitelinks.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>();
+    assert_eq!(sites("Q9100"), ["dewiki", "nlwiki", "enwiki"]);
+    assert_eq!(sites("Q9101"), ["nlwiki", "enwiki"]);
+    for id in ["Q9100", "Q9101"] {
+        assert!(get(id).claims.is_empty());
+        assert_eq!((get(id).sitelink_count, get(id).wikipedia_count), (Some(5), Some(3)));
+    }
+    // A rule for languages takes no classes.
+    let bad = EntityOptions {
+        languages_by: opts.sitelinks_by.clone(),
+        ..Default::default()
+    };
+    assert!(wikidata_export::entities(&Dump::open(path.as_path()).unwrap(), &bad, &mut |_| Flow::Continue).is_err());
 }

@@ -16,6 +16,14 @@ pub struct ModelOptions {
     pub languages: Option<Vec<String>>,
     /// Sites to keep sitelinks for (`["nlwiki", "enwiki"]`). `None`: all.
     pub sitelinks: Option<Vec<String>>,
+    /// More sites for the items of some classes (every Wikipedia for
+    /// artists), on top of `sitelinks`. See [`SitesFor`].
+    pub sitelinks_for: Option<SitesFor>,
+    /// Count each entity's sitelinks, the pruned ones included, into
+    /// [`crate::Entity::sitelink_count`] and
+    /// [`crate::Entity::wikipedia_count`] (default false). The skipped
+    /// sitelinks are counted from their keys, without allocating.
+    pub sitelink_counts: bool,
     /// Properties to keep claims for. `None`: all.
     pub properties: Option<Vec<Pid>>,
     /// Keep labels (default true).
@@ -46,6 +54,8 @@ impl Default for ModelOptions {
         Self {
             languages: None,
             sitelinks: None,
+            sitelinks_for: None,
+            sitelink_counts: false,
             properties: None,
             labels: true,
             descriptions: true,
@@ -56,6 +66,52 @@ impl Default for ModelOptions {
             deprecated: false,
             best_rank: false,
             derived: true,
+        }
+    }
+}
+
+/// Sites kept for the items of some classes, on top of what `sitelinks`
+/// keeps for every entity: with `instance_of` `[Q5, Q215380]` and
+/// `groups` `[wikipedia]`, a human or a musical group keeps every
+/// Wikipedia sitelink and any other item only `sitelinks`. The classes
+/// are matched against the truthy P31 statements (not their subclasses),
+/// read before the sitelinks, so the other items' extra sitelinks are
+/// skipped without allocating.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SitesFor {
+    /// The classes (`Q5`), as values of P31.
+    pub instance_of: Vec<String>,
+    /// The site groups to keep (see [`crate::sites::SITE_GROUPS`]); empty:
+    /// every site.
+    pub groups: Vec<String>,
+}
+
+impl SitesFor {
+    /// Check the groups.
+    pub fn validate(&self) -> Result<(), String> {
+        for g in &self.groups {
+            if !crate::sites::SITE_GROUPS.contains(&g.as_str()) {
+                return Err(format!(
+                    "unknown site group {g:?} (expected one of {})",
+                    crate::sites::SITE_GROUPS.join(", ")
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether an item with these P31 values is one of the classes.
+    pub fn matches<'a>(&self, instance_of: impl IntoIterator<Item = &'a str>) -> bool {
+        instance_of.into_iter().any(|c| self.instance_of.iter().any(|x| x == c))
+    }
+
+    /// Whether a site is in the groups.
+    #[inline]
+    pub fn keeps_site(&self, site: &str) -> bool {
+        match self.groups.as_slice() {
+            [] => true,
+            [g] if g == "wikipedia" => crate::sites::is_wikipedia(site),
+            gs => crate::sites::site_group(site).is_some_and(|s| gs.iter().any(|g| g == s)),
         }
     }
 }
@@ -161,9 +217,10 @@ impl Compiled {
         }
     }
 
-    /// Whether a sitelink is kept.
+    /// Whether a sitelink is kept for every entity (`sitelinks`; see
+    /// [`ModelOptions::sitelinks_for`] for the items of some classes).
     #[inline]
-    pub(crate) fn keeps_site(&self, site: &str) -> bool {
+    pub fn keeps_site(&self, site: &str) -> bool {
         self.opts.sitelinks.as_ref().is_none_or(|s| s.iter().any(|x| x == site))
     }
 }

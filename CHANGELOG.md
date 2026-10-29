@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.0 — unreleased
+
+- …
+
 ## 0.3.1 — unreleased
 
 Fixes from Festimap adopting 0.3.0 (its W-17 to W-19), each with a

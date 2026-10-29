@@ -11,7 +11,7 @@ use serde::Deserialize;
 use wikidata_export::{
     ByClaim, Checkpoint, CompiledFilter, Filter, Indexes, LabelOptions, ModelOptions, PlaceIndex, ScanOptions,
 };
-use wikidata_model::Pid;
+use wikidata_model::{id_number, Pid, SitesFor};
 
 use crate::class_index::lookup;
 use crate::indexes::{places, redirects};
@@ -62,6 +62,8 @@ pub struct NativeOptions {
     pub sitelinks: Option<Vec<String>>,
     /// Sites chosen by claims, as JSON.
     pub sitelinks_by_json: Option<String>,
+    /// Count each entity's sitelinks, the pruned ones included.
+    pub sitelink_counts: Option<bool>,
     /// Build the class index during the task and save it here.
     pub class_index_output: Option<String>,
     /// Properties to keep claims for (default: all).
@@ -189,14 +191,37 @@ pub(crate) fn scan(o: &NativeOptions) -> Result<ScanOptions> {
     })
 }
 
-/// `{by: "P17" | ["P17", …], map: {Q55: ["nl"]}, always?: ["en"]}`.
+/// `{by?: "P17" | ["P17", …], map?: {Q55: ["nl"]}, always?: ["en"],
+/// allFor?: {instanceOf, group?}}`.
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct ByClaimJson {
-    by: OneOrMany,
+    #[serde(default)]
+    by: Option<OneOrMany>,
+    #[serde(default)]
     map: HashMap<String, Vec<String>>,
     #[serde(default)]
     always: Vec<String>,
+    #[serde(default)]
+    all_for: Option<AllForJson>,
+}
+
+/// `{instanceOf: "Q5" | ["Q5", …], group?: "wikipedia" | […]}`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct AllForJson {
+    instance_of: OneOrMany,
+    #[serde(default)]
+    group: Option<OneOrMany>,
+}
+
+impl OneOrMany {
+    fn into_vec(self) -> Vec<String> {
+        match self {
+            OneOrMany::One(s) => vec![s],
+            OneOrMany::Many(v) => v,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -208,12 +233,36 @@ enum OneOrMany {
 
 pub(crate) fn by_claim(json: &Option<String>, what: &str, places: Option<Arc<PlaceIndex>>) -> Result<Option<ByClaim>> {
     let Some(json) = json else { return Ok(None) };
-    let r: ByClaimJson =
-        serde_json::from_str(json).map_err(|e| invalid(format!("{what}: expected {{ by, map, always }}: {e}")))?;
-    let by = match r.by {
-        OneOrMany::One(p) => vec![p],
-        OneOrMany::Many(ps) => ps,
+    let r: ByClaimJson = serde_json::from_str(json)
+        .map_err(|e| invalid(format!("{what}: expected {{ by, map, always, allFor }}: {e}")))?;
+    let by = r.by.map(OneOrMany::into_vec).unwrap_or_default();
+    let all_for = match r.all_for {
+        Some(_) if what != "sitelinks" => {
+            return Err(invalid(format!("{what}.allFor: only a sitelinks rule takes allFor")))
+        }
+        Some(a) => {
+            let f = SitesFor {
+                instance_of: a.instance_of.into_vec(),
+                groups: a.group.map(OneOrMany::into_vec).unwrap_or_default(),
+            };
+            if let Some(c) = f
+                .instance_of
+                .iter()
+                .find(|c| !c.starts_with('Q') || id_number(c).is_none())
+            {
+                return Err(invalid(format!("{what}.allFor.instanceOf: not an item id: {c:?}")));
+            }
+            f.validate().map_err(|e| invalid(format!("{what}.allFor.group: {e}")))?;
+            Some(f)
+        }
+        None => None,
     };
+    if by.is_empty() && all_for.is_none() {
+        return Err(invalid(format!(
+            "{what}.by: name the properties whose values choose{}",
+            if what == "sitelinks" { " (or give allFor)" } else { "" }
+        )));
+    }
     let properties = by
         .iter()
         .map(|p| Pid::parse(p).ok_or_else(|| invalid(format!("{what}.by: not a property id: {p:?}"))))
@@ -223,6 +272,7 @@ pub(crate) fn by_claim(json: &Option<String>, what: &str, places: Option<Arc<Pla
         map: r.map,
         always: r.always,
         places,
+        all_for,
     }))
 }
 
@@ -247,6 +297,8 @@ pub(crate) fn model(o: &NativeOptions) -> Result<ModelOptions> {
         languages: o.languages.clone(),
         qualifier_properties,
         sitelinks: o.sitelinks.clone(),
+        sitelinks_for: None,
+        sitelink_counts: o.sitelink_counts.unwrap_or(false),
         properties,
         labels: o.labels.unwrap_or(true),
         descriptions: o.descriptions.unwrap_or(true),

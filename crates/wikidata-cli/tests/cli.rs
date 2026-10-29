@@ -85,6 +85,34 @@ fn cat_filters_and_shapes() {
     assert_eq!(q42["sitelinks"], serde_json::json!({}));
     assert_eq!(q42["externalIds"]["viaf"], "113230702");
 
+    // Counts beside the pruned sitelinks, and every Wikipedia for humans.
+    let (ok, out, _) = run(&[
+        "cat",
+        s,
+        "-q",
+        "--id",
+        "Q31,Q42",
+        "--sites",
+        "enwiki",
+        "--sites-for",
+        "Q5",
+        "--sites-for-group",
+        "wikipedia",
+        "--sitelink-counts",
+    ]);
+    assert!(ok);
+    let rows: Vec<serde_json::Value> = out.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    let keys = |v: &serde_json::Value| v["sitelinks"].as_object().unwrap().keys().cloned().collect::<Vec<_>>();
+    assert_eq!(keys(&rows[0]), ["enwiki"]);
+    assert_eq!(
+        (rows[0]["sitelinkCount"].as_u64(), rows[0]["wikipediaCount"].as_u64()),
+        (Some(4), Some(3))
+    );
+    assert_eq!(keys(&rows[1]), ["enwiki", "nlwiki"]);
+    let (ok, _, err) = run(&["cat", s, "-q", "--sites-for", "Q5", "--sites-for-group", "wiki"]);
+    assert!(!ok);
+    assert!(err.contains("unknown site group"), "{err}");
+
     let (ok, out, _) = run(&["cat", s, "-q", "--type", "property", "--raw"]);
     assert!(ok);
     assert!(out.lines().all(|l| l.starts_with("{\"type\":\"property\"")));

@@ -432,6 +432,8 @@ impl Filter {
             Compiled::new(ModelOptions {
                 languages: Some(Vec::new()),
                 sitelinks: Some(needs.sites.iter().cloned().collect()),
+                sitelinks_for: None,
+                sitelink_counts: false,
                 properties: Some(needs.properties.iter().map(|&p| Pid(p)).collect()),
                 labels: false,
                 descriptions: false,

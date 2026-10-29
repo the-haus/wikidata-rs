@@ -1,4 +1,4 @@
-//! Page URLs for sitelinks and Commons files.
+//! Page URLs for sitelinks and Commons files, and the site groups.
 
 /// Wikimedia projects by their site-id suffix.
 const PROJECTS: [(&str, &str); 8] = [
@@ -12,8 +12,8 @@ const PROJECTS: [(&str, &str); 8] = [
     ("wiktionary", "wiktionary.org"),
 ];
 
-/// Sites that are not `<language><project>`.
-const SPECIAL: [(&str, &str); 10] = [
+/// Sites that are not `<language><project>` (the `special` group).
+const SPECIAL: [(&str, &str); 11] = [
     ("commonswiki", "commons.wikimedia.org"),
     ("specieswiki", "species.wikimedia.org"),
     ("metawiki", "meta.wikimedia.org"),
@@ -24,12 +24,14 @@ const SPECIAL: [(&str, &str); 10] = [
     ("outreachwiki", "outreach.wikimedia.org"),
     ("wikimaniawiki", "wikimania.wikimedia.org"),
     ("wikifunctionswiki", "www.wikifunctions.org"),
+    ("foundationwiki", "foundation.wikimedia.org"),
 ];
 
-/// The host of a site id (`nlwiki` → `nl.wikipedia.org`).
-pub fn site_host(site: &str) -> Option<String> {
-    if let Some((_, host)) = SPECIAL.iter().find(|(s, _)| *s == site) {
-        return Some((*host).to_string());
+/// A `<language><project>` site: its language code (`zh_yue`), project
+/// suffix and domain.
+fn project(site: &str) -> Option<(&str, &'static str, &'static str)> {
+    if SPECIAL.iter().any(|(s, _)| *s == site) {
+        return None;
     }
     // The longest suffix first: `wiki` is a suffix of the others' ids too.
     let mut best: Option<(&str, &str)> = None;
@@ -40,9 +42,57 @@ pub fn site_host(site: &str) -> Option<String> {
     }
     let (suffix, domain) = best?;
     let lang = &site[..site.len() - suffix.len()];
-    if !lang.bytes().all(|b| b.is_ascii_lowercase() || b == b'_') {
-        return None;
+    lang.bytes()
+        .all(|b| b.is_ascii_lowercase() || b == b'_')
+        .then_some((lang, suffix, domain))
+}
+
+/// The site groups, as Wikidata names them: one per project
+/// (`wikipedia`, `wikivoyage`, `wikiquote`, `wikisource`, `wikinews`,
+/// `wikibooks`, `wikiversity`, `wiktionary`) and `special` for Commons,
+/// Wikispecies, Wikidata, Meta and the other sites of [`site_group`].
+pub const SITE_GROUPS: [&str; 9] = [
+    "wikipedia",
+    "wikivoyage",
+    "wikiquote",
+    "wikisource",
+    "wikinews",
+    "wikibooks",
+    "wikiversity",
+    "wiktionary",
+    "special",
+];
+
+/// The group of a site id: `nlwiki` → `wikipedia`, `dewikivoyage` →
+/// `wikivoyage`, `commonswiki` → `special` (likewise `specieswiki`,
+/// `metawiki`, `mediawikiwiki`, `wikidatawiki`, `sourceswiki`,
+/// `incubatorwiki`, `outreachwiki`, `wikimaniawiki`, `wikifunctionswiki`,
+/// `foundationwiki`); `None` for an id that is neither.
+pub fn site_group(site: &str) -> Option<&'static str> {
+    if SPECIAL.iter().any(|(s, _)| *s == site) {
+        return Some("special");
     }
+    project(site).map(|(_, _, domain)| domain.trim_end_matches(".org"))
+}
+
+/// Whether a site id is a Wikipedia (`<code>wiki`, not one of the special
+/// sites): what [`crate::Entity::wikipedia_count`] counts.
+#[inline]
+pub fn is_wikipedia(site: &str) -> bool {
+    site.len() > 4
+        && site.ends_with("wiki")
+        && !SPECIAL.iter().any(|(s, _)| *s == site)
+        && site[..site.len() - 4]
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b == b'_')
+}
+
+/// The host of a site id (`nlwiki` → `nl.wikipedia.org`).
+pub fn site_host(site: &str) -> Option<String> {
+    if let Some((_, host)) = SPECIAL.iter().find(|(s, _)| *s == site) {
+        return Some((*host).to_string());
+    }
+    let (lang, _, domain) = project(site)?;
     Some(format!("{}.{domain}", lang.replace('_', "-")))
 }
 
@@ -108,6 +158,40 @@ mod tests {
         assert_eq!(site_host("commonswiki").as_deref(), Some("commons.wikimedia.org"));
         assert_eq!(site_host("dewiktionary").as_deref(), Some("de.wiktionary.org"));
         assert_eq!(site_host("wiki"), None);
+    }
+
+    #[test]
+    fn groups() {
+        assert_eq!(site_group("nlwiki"), Some("wikipedia"));
+        assert_eq!(site_group("be_x_oldwiki"), Some("wikipedia"));
+        assert_eq!(site_group("simplewiki"), Some("wikipedia"));
+        assert_eq!(site_group("dewikivoyage"), Some("wikivoyage"));
+        assert_eq!(site_group("enwiktionary"), Some("wiktionary"));
+        assert_eq!(site_group("frwikisource"), Some("wikisource"));
+        for s in [
+            "commonswiki",
+            "specieswiki",
+            "wikidatawiki",
+            "metawiki",
+            "mediawikiwiki",
+            "sourceswiki",
+            "wikimaniawiki",
+            "foundationwiki",
+            "outreachwiki",
+            "incubatorwiki",
+            "wikifunctionswiki",
+        ] {
+            assert_eq!(site_group(s), Some("special"), "{s}");
+            assert!(!is_wikipedia(s), "{s}");
+        }
+        assert_eq!(site_group("wiki"), None);
+        assert_eq!(site_group("EnWiki"), None);
+        for s in ["nlwiki", "zh_yuewiki", "simplewiki"] {
+            assert!(is_wikipedia(s), "{s}");
+        }
+        for s in ["wiki", "enwikivoyage", "enwiktionary", "EnWiki"] {
+            assert!(!is_wikipedia(s), "{s}");
+        }
     }
 
     #[test]

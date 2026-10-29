@@ -1123,7 +1123,7 @@ dependencies = [
 
 [[package]]
 name = "wikidata-cli"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "bzip2",
@@ -1138,7 +1138,7 @@ dependencies = [
 
 [[package]]
 name = "wikidata-dump"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "bzip2",
  "crc32fast",
@@ -1154,7 +1154,7 @@ dependencies = [
 
 [[package]]
 name = "wikidata-export"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "aho-corasick",
  "bzip2",
@@ -1170,7 +1170,7 @@ dependencies = [
 
 [[package]]
 name = "wikidata-filter"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -1184,7 +1184,7 @@ dependencies = [
 
 [[package]]
 name = "wikidata-model"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "memchr",
  "rustc-hash",
@@ -1196,7 +1196,7 @@ dependencies = [
 
 [[package]]
 name = "wikidata-node"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "mimalloc",
  "napi",

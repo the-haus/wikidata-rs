@@ -176,6 +176,8 @@ impl<'de> Visitor<'de> for EntitySeed<'_> {
         let mut acc = DerivedAcc::default();
         let mut lexeme: Option<LexemeData> = None;
         let mut has_type = false;
+        let mut widened_early = false;
+        let mut counts: Option<(u32, u32)> = None;
         while let Some(k) = map.next_key_seed(With(entity_key))? {
             match k {
                 EntityKey::Type => {
@@ -190,8 +192,20 @@ impl<'de> Visitor<'de> for EntitySeed<'_> {
                     e.descriptions = map.next_value_seed(TermsSeed { c, filter: true })?
                 }
                 EntityKey::Aliases if o.aliases => e.aliases = map.next_value_seed(AliasesSeed { c })?,
-                EntityKey::Claims => e.claims = map.next_value_seed(ClaimsSeed { c, acc: Some(&mut acc) })?,
-                EntityKey::Sitelinks => e.sitelinks = map.next_value_seed(SitelinksSeed { c })?,
+                EntityKey::Claims => {
+                    e.claims = map.next_value_seed(ClaimsSeed { c, acc: Some(&mut acc) })?;
+                    acc.claims_seen = true;
+                }
+                EntityKey::Sitelinks => {
+                    // The classes are known when the claims come first (as
+                    // in dumps and the API); else the extra sites are kept
+                    // until they are.
+                    let widen = o.sitelinks_for.is_some() && (acc.widen_sites || !acc.claims_seen);
+                    widened_early = widen && !acc.claims_seen;
+                    let s = map.next_value_seed(SitelinksSeed { c, widen })?;
+                    e.sitelinks = s.links;
+                    counts = Some((s.all, s.wikipedias));
+                }
                 EntityKey::LastRevId => e.lastrevid = map.next_value()?,
                 EntityKey::Modified => e.modified = map.next_value()?,
                 EntityKey::Lemmas => {
@@ -223,6 +237,14 @@ impl<'de> Visitor<'de> for EntitySeed<'_> {
         }
         if e.kind == EntityType::Lexeme {
             e.lexeme = Some(lexeme.unwrap_or_default());
+        }
+        if widened_early && !acc.widen_sites {
+            e.sitelinks.0.retain(|(s, _)| c.keeps_site(s));
+        }
+        if o.sitelink_counts {
+            let (all, wikipedias) = counts.unwrap_or_default();
+            e.sitelink_count = Some(all);
+            e.wikipedia_count = Some(wikipedias);
         }
         e.label = pick(&e.labels, &c.fallback);
         e.description = pick(&e.descriptions, &c.fallback);
@@ -339,10 +361,19 @@ struct RawSitelink {
 
 struct SitelinksSeed<'a> {
     c: &'a Compiled,
+    /// Also keep the sites of `sitelinks_for`.
+    widen: bool,
+}
+
+/// The kept sitelinks and the counts of all of them.
+struct Sitelinks {
+    links: Map<String, Sitelink>,
+    all: u32,
+    wikipedias: u32,
 }
 
 impl<'de> DeserializeSeed<'de> for SitelinksSeed<'_> {
-    type Value = Map<String, Sitelink>;
+    type Value = Sitelinks;
     fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
         // Empty maps are written as `[]`.
         d.deserialize_any(self)
@@ -350,17 +381,30 @@ impl<'de> DeserializeSeed<'de> for SitelinksSeed<'_> {
 }
 
 impl<'de> Visitor<'de> for SitelinksSeed<'_> {
-    type Value = Map<String, Sitelink>;
+    type Value = Sitelinks;
     fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.write_str("sitelinks")
     }
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
         while seq.next_element::<IgnoredAny>()?.is_some() {}
-        Ok(Map::default())
+        Ok(Sitelinks {
+            links: Map::default(),
+            all: 0,
+            wikipedias: 0,
+        })
     }
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
         let mut out = Vec::new();
-        while let Some(site) = map.next_key_seed(With(|k: &str| self.c.keeps_site(k).then(|| k.to_string())))? {
+        let (mut all, mut wikipedias) = (0u32, 0u32);
+        let count = self.c.opts.sitelink_counts;
+        let extra = self.c.opts.sitelinks_for.as_ref().filter(|_| self.widen);
+        while let Some(site) = map.next_key_seed(With(|k: &str| {
+            if count {
+                all += 1;
+                wikipedias += u32::from(sites::is_wikipedia(k));
+            }
+            (self.c.keeps_site(k) || extra.is_some_and(|x| x.keeps_site(k))).then(|| k.to_string())
+        }))? {
             match site {
                 Some(site) => {
                     let s: RawSitelink = map.next_value()?;
@@ -377,7 +421,11 @@ impl<'de> Visitor<'de> for SitelinksSeed<'_> {
                 None => ignore(&mut map)?,
             }
         }
-        Ok(Map(out))
+        Ok(Sitelinks {
+            links: Map(out),
+            all,
+            wikipedias,
+        })
     }
 }
 
@@ -388,6 +436,10 @@ impl<'de> Visitor<'de> for SitelinksSeed<'_> {
 pub(crate) struct DerivedAcc {
     d: Derived,
     external: Vec<(u16, String)>,
+    /// The claims were read.
+    claims_seen: bool,
+    /// A truthy P31 is one of `sitelinks_for`'s classes.
+    widen_sites: bool,
 }
 
 /// The best-ranked statements: preferred ones if any, else normal ones.
@@ -507,13 +559,22 @@ impl<'de> Visitor<'de> for ClaimsSeed<'_, '_> {
                 Some(_) => c.slots.get(&p.0).copied(),
                 None => None,
             };
-            if !keep && slot.is_none() {
+            let classes = match (&self.acc, &c.opts.sitelinks_for) {
+                (Some(_), Some(f)) if p.0 == 31 => Some(f),
+                _ => None,
+            };
+            if !keep && slot.is_none() && classes.is_none() {
                 ignore(&mut map)?;
                 continue;
             }
             let mut sts: Vec<Statement> = map.next_value_seed(StatementsSeed { c, full: keep })?;
-            if let (Some(slot), Some(acc)) = (slot, self.acc.as_deref_mut()) {
-                acc.feed(slot, &sts);
+            if let Some(acc) = self.acc.as_deref_mut() {
+                if let Some(slot) = slot {
+                    acc.feed(slot, &sts);
+                }
+                if let Some(f) = classes {
+                    acc.widen_sites |= f.matches(truthy(&sts).filter_map(|s| s.value.entity_id()));
+                }
             }
             if keep {
                 filter_ranks(&mut sts, c);

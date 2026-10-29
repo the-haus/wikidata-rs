@@ -48,6 +48,12 @@ function qids(values: Uint32Array, offsets: Uint32Array, i: number): string[] {
   return out;
 }
 
+/** A count column's value; `null` when the column is absent or the entity was not counted. */
+function count(column: Uint32Array | undefined, i: number): number | null {
+  const v = column?.[i];
+  return v === undefined || v === 0xffffffff ? null : v;
+}
+
 class LazyRecord implements EntityRecord {
   readonly #batch: Batch;
   readonly #i: number;
@@ -147,6 +153,14 @@ class LazyRecord implements EntityRecord {
     return qids(b.mergedFrom, b.mergedFromOffsets, this.#i);
   }
 
+  get sitelinkCount(): number | null {
+    return count(this.#batch.b.sitelinkCounts, this.#i);
+  }
+
+  get wikipediaCount(): number | null {
+    return count(this.#batch.b.wikipediaCounts, this.#i);
+  }
+
   get json(): string {
     const b = this.#batch.b;
     return b.json.slice(b.jsonOffsets[this.#i]!, b.jsonOffsets[this.#i + 1]!);
@@ -180,6 +194,8 @@ class LazyRecord implements EntityRecord {
       externalIds: this.externalIds,
       matchedBy: this.matchedBy,
       mergedFrom: this.mergedFrom,
+      sitelinkCount: this.sitelinkCount,
+      wikipediaCount: this.wikipediaCount,
     };
   }
 

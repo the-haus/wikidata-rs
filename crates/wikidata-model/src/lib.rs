@@ -14,7 +14,7 @@ pub use entity::{
     Statement, Text, Time, Value,
 };
 pub use external::{external_id, external_id_url, ExternalId, EXTERNAL_IDS};
-pub use options::{Compiled, ModelOptions};
+pub use options::{Compiled, ModelOptions, SitesFor};
 pub use parse::{parse_entity, parse_entity_with, truthy, Backend, ParseError};
 pub use peek::{id_number, lastrevid, peek, Peek};
 

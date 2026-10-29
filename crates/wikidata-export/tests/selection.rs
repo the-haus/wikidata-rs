@@ -106,6 +106,7 @@ fn languages_and_sitelinks_by_country() {
             .collect(),
         always: always.iter().map(|s| s.to_string()).collect(),
         places: None,
+        all_for: None,
     };
     let opts = EntityOptions {
         scan: scan(r#"{"ids":["Q31","Q55","Q42"]}"#),
@@ -141,6 +142,69 @@ fn languages_and_sitelinks_by_country() {
     let person = get("Q42");
     assert_eq!(langs(&person.labels), ["en"]);
     assert_eq!(sites(person), ["enwiki"]);
+}
+
+/// Sitelink counts beside the pruned sitelinks (Festimap's W-20), and
+/// every Wikipedia for the items of some classes (W-21), on the summary
+/// too.
+#[test]
+fn sitelink_counts_and_every_wikipedia_for_some_classes() {
+    let dump = Dump::open(sample_path()).unwrap();
+    let mut rule = ByClaim {
+        properties: vec![Pid(17)],
+        map: [("Q55".to_string(), vec!["nlwiki".to_string()])].into(),
+        always: vec!["enwiki".into()],
+        places: None,
+        all_for: Some(wikidata_model::SitesFor {
+            instance_of: vec!["Q5".into()],
+            groups: vec!["wikipedia".into()],
+        }),
+    };
+    let mut opts = EntityOptions {
+        scan: scan(r#"{"ids":["Q31","Q55","Q42"]}"#),
+        model: ModelOptions {
+            sitelink_counts: true,
+            properties: Some(vec![Pid(1)]),
+            ..Default::default()
+        },
+        sitelinks_by: Some(rule.clone()),
+        ..Default::default()
+    };
+    for summary in [false, true] {
+        opts.summary_only = summary;
+        opts.json = summary;
+        let (rs, _) = collect(&dump, &opts);
+        let get = |id: &str| rs.iter().find(|r| r.entity.id == id).unwrap();
+        let sites = |id: &str| {
+            get(id)
+                .entity
+                .sitelinks
+                .iter()
+                .map(|(s, _)| s.clone())
+                .collect::<Vec<_>>()
+        };
+        let counts = |id: &str| (get(id).entity.sitelink_count, get(id).entity.wikipedia_count);
+        // nlwiki, enwiki, commonswiki, zh_yuewiki.
+        assert_eq!(counts("Q31"), (Some(4), Some(3)));
+        assert_eq!(counts("Q55"), (Some(2), Some(2)));
+        assert_eq!(counts("Q42"), (Some(2), Some(2)));
+        if summary {
+            assert!(sites("Q42").is_empty());
+            let json = String::from_utf8(get("Q31").json.clone()).unwrap();
+            assert!(json.contains(r#""sitelinks":{"enwiki""#), "{json}");
+            assert!(json.contains(r#""sitelinkCount":4,"wikipediaCount":3"#), "{json}");
+        } else {
+            // A human: every Wikipedia; a country: what its P17 chooses.
+            assert_eq!(sites("Q42"), ["enwiki", "nlwiki"]);
+            assert_eq!(sites("Q55"), ["nlwiki", "enwiki"]);
+            assert_eq!(sites("Q31"), ["enwiki"]);
+            assert!(get("Q42").entity.claims.is_empty());
+        }
+    }
+    // Groups are checked.
+    rule.all_for.as_mut().unwrap().groups = vec!["wikipedias".into()];
+    opts.sitelinks_by = Some(rule);
+    assert!(wikidata_export::entities(&dump, &opts, &mut |_| Flow::Continue).is_err());
 }
 
 #[test]

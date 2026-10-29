@@ -63,6 +63,8 @@ export interface NativeOptions {
   sitelinks?: Array<string>
   /** Sites chosen by claims, as JSON. */
   sitelinksByJson?: string
+  /** Count each entity's sitelinks, the pruned ones included. */
+  sitelinkCounts?: boolean
   /** Build the class index during the task and save it here. */
   classIndexOutput?: string
   /** Properties to keep claims for (default: all). */
